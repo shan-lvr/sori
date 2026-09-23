@@ -235,7 +235,7 @@ impl App {
             let app = self.clone();
             tauri::async_runtime::spawn(async move {
                 let dict = app.store.lock().dictionary_terms().unwrap_or_default();
-                let (system, user) = sori_core::prompts::dictate_local(&s, &dict, "음 테스트");
+                let (system, user) = sori_core::prompts::dictate_local(&s, &sori_core::Context::default(), &dict, "음 테스트");
                 let req = sori_core::llm::ChatRequest {
                     model: id.clone(),
                     system,

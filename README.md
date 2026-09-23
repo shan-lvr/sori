@@ -2,6 +2,8 @@
 
 **Speak, don't type.** Press a shortcut in any text field, talk the way you think, and Sori pastes a clean, concise version at your cursor — fillers, false starts and rambling removed, your intent kept.
 
+Built first for **dictating prompts to AI coding agents** (Claude Code, Codex, Cursor): cleanup reads misheard words in a developer context and restates what you said as a clear instruction — situation, request, constraints — while keeping every "don't do X" and "maybe".
+
 - **Fully on-device by default** — Whisper large-v3-turbo for speech, and a small language model (Gemma 4 E2B via llama.cpp) for cleanup. Metal on macOS, Vulkan on Windows (integrated graphics work). No keys, no account, nothing leaves your computer.
 - **Optional cloud engines** — ElevenLabs Scribe for speech, OpenRouter (e.g. Gemini 3.8 Flash) for sharper writing.
 - **Translate** as you speak, and **Ask anything** about selected text ("make this more polite", "summarize").
@@ -91,5 +93,7 @@ cargo run -p sori-core --example polish_eval -- google/gemini-3.8-flash local:ge
 - macOS: daily-driven.
 - Windows: implemented and built in CI; not yet tested on real hardware. Text-field detection relies on the system caret, so some apps (browsers, Electron) are treated as "unknown" and always get a paste.
 - Android: planned as a keyboard (IME) reusing `sori-core`.
+
+**Picking this up (human or agent)?** Read [docs/HANDOFF.md](docs/HANDOFF.md) — what's verified, the Windows checklist, known gaps and how the prompts work.
 
 Benchmarks and design notes (Korean): [docs/NOTES.ko.md](docs/NOTES.ko.md).

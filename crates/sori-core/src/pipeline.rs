@@ -101,7 +101,7 @@ pub async fn process_text(
     match mode {
         Mode::Dictate => {
             let local = s.local_llm();
-            let (system, user) = if local { prompts::dictate_local(s, dictionary, raw) } else { prompts::dictate(s, ctx, dictionary, raw) };
+            let (system, user) = if local { prompts::dictate_local(s, ctx, dictionary, raw) } else { prompts::dictate(s, ctx, dictionary, raw) };
             let req = ChatRequest {
                 model: s.text_model(),
                 system,
