@@ -552,7 +552,7 @@ function AdminPanel({ admin, onChange }: { admin: AdminStatus | null; onChange: 
     try {
       onChange(await api.adminUnlock(pw));
       setPw("");
-      toast(L("Admin mode unlocked on this device", "이 기기에서 관리자 모드를 켰어요"));
+      toast(L("Admin mode on", "관리자 모드 켜짐"));
     } catch (e) {
       setErr(String(e).includes("Wrong") ? L("Wrong password", "비밀번호가 틀렸어요") : String(e));
     } finally {
@@ -561,27 +561,14 @@ function AdminPanel({ admin, onChange }: { admin: AdminStatus | null; onChange: 
   };
   const lock = async () => {
     onChange(await api.adminLock());
-    toast(L("Admin mode locked — back to Local AI only", "관리자 모드를 껐어요 — 로컬 AI만 사용해요"));
+    toast(L("Admin mode off", "관리자 모드 꺼짐"));
   };
+  if (!admin.available) return null;
   return (
     <Row
       title={L("Admin mode", "관리자 모드")}
-      desc={
-        !admin.available
-          ? L("Not available in this build. Cloud engines and API keys are for the owner only.", "이 빌드에서는 사용할 수 없어요. 클라우드 엔진과 API 키는 소유자 전용이에요.")
-          : admin.unlocked
-            ? L(
-                "Unlocked on this device: cloud engines (ElevenLabs, OpenRouter), API keys and model choice are available. Lock to go back to Local AI and remove the keys from this device.",
-                "이 기기에서 켜져 있어요: 클라우드 엔진(ElevenLabs, OpenRouter), API 키, 모델 선택을 쓸 수 있어요. 끄면 로컬 AI로 돌아가고 이 기기의 키가 지워져요.",
-              )
-            : L(
-                "Cloud engines (ElevenLabs, OpenRouter) and API keys are for the owner only. Everyone else uses Local AI — private, free, offline.",
-                "클라우드 엔진(ElevenLabs, OpenRouter)과 API 키는 소유자 전용이에요. 그 외에는 로컬 AI를 써요 — 비공개 · 무료 · 오프라인.",
-              )
-      }
     >
-      {admin.available &&
-        (admin.unlocked ? (
+      {admin.unlocked ? (
           <button className="btn small" onClick={lock}>
             {L("Lock", "잠그기")}
           </button>
@@ -603,7 +590,7 @@ function AdminPanel({ admin, onChange }: { admin: AdminStatus | null; onChange: 
             </div>
             {err && <span className="key-status bad">✕ {err}</span>}
           </div>
-        ))}
+        )}
     </Row>
   );
 }
@@ -653,7 +640,7 @@ function AiKeys({ settings: s, save }: Props) {
           {unlocked ? (
             <select className="select" value={s.stt_engine} onChange={(e) => save({ ...s, stt_engine: e.target.value as Settings["stt_engine"] })}>
               <option value="local">{L("Local AI — Whisper (574 MB)", "로컬 AI — Whisper (574 MB)")}</option>
-              <option value="elevenlabs">{L("ElevenLabs — cloud (admin)", "ElevenLabs — 클라우드 (관리자)")}</option>
+              <option value="elevenlabs">{L("ElevenLabs — cloud", "ElevenLabs — 클라우드")}</option>
             </select>
           ) : (
             <span className="key-status ok">{L("Local AI — Whisper (574 MB)", "로컬 AI — Whisper (574 MB)")}</span>
@@ -680,7 +667,7 @@ function AiKeys({ settings: s, save }: Props) {
           >
             <select className="select" value={s.llm_provider} onChange={(e) => save({ ...s, llm_provider: e.target.value as Settings["llm_provider"] })}>
               <option value="local">{L("Local AI — private, free, offline", "로컬 AI — 비공개 · 무료 · 오프라인")}</option>
-              <option value="openrouter">{L("OpenRouter — cloud (admin)", "OpenRouter — 클라우드 (관리자)")}</option>
+              <option value="openrouter">{L("OpenRouter — cloud", "OpenRouter — 클라우드")}</option>
             </select>
           </Row>
         )}
@@ -728,10 +715,11 @@ function AiKeys({ settings: s, save }: Props) {
           </select>
         </Row>
       </div>
-      <div className="set-section">
-        <h3>{L("Admin", "관리자")}</h3>
-        <AdminPanel admin={admin} onChange={onAdminChange} />
-      </div>
+      {admin?.available && (
+        <div className="set-section">
+          <AdminPanel admin={admin} onChange={onAdminChange} />
+        </div>
+      )}
       {unlocked && (
       <div className="set-section">
         <h3>{L("API keys", "API 키")}</h3>
