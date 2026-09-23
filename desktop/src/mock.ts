@@ -3,8 +3,8 @@ import type { DictWord, HistoryEntry, Settings, Stats } from "./api";
 
 const now = Date.now();
 const settings: Settings = {
-  elevenlabs_api_key: "sk_mock",
-  openrouter_api_key: "sk-or-mock",
+  elevenlabs_api_key: "",
+  openrouter_api_key: "",
   stt_model: "scribe_v2",
   stt_engine: "local",
   local_model: "whisper-large-v3-turbo-q5_0",
@@ -208,6 +208,8 @@ async function mockDownload(model: MockModel) {
   model.stop = "";
 }
 
+const admin = { available: true, unlocked: false, has_default_keys: true };
+
 export async function mockInvoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
   switch (cmd) {
     case "retry_history": {
@@ -268,6 +270,17 @@ export async function mockInvoke(cmd: string, args?: Record<string, unknown>): P
     case "delete_local_model":
       Object.assign(findModel(args?.id), { installed: false, loaded: false, paused: true, download: null });
       return null;
+    case "admin_status":
+      return { ...admin };
+    case "admin_unlock":
+      await new Promise((r) => setTimeout(r, 400));
+      if (args?.password !== "sori") throw "Wrong password";
+      admin.unlocked = true;
+      return settings;
+    case "admin_lock":
+      admin.unlocked = false;
+      Object.assign(settings, { stt_engine: "local", llm_provider: "local", elevenlabs_api_key: "", openrouter_api_key: "" });
+      return settings;
     case "app_info":
       return { version: "0.1.0", data_dir: "~/Library/Application Support/com.seyoon.sori", config_path: "…/settings.json", has_default_keys: true, platform: "macos", default_shortcuts: { dictate: [["Fn"]], translate: [["Fn", "ShiftLeft"]], ask: [["Fn", "Space"]] } };
     default:

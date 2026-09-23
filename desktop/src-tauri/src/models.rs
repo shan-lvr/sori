@@ -39,7 +39,7 @@ pub const MODELS: &[ModelInfo] = &[
     ModelInfo {
         id: "whisper-large-v3-turbo-q5_0",
         kind: Kind::Stt,
-        label: "Whisper large-v3-turbo (q5)",
+        label: "Whisper",
         file: "ggml-large-v3-turbo-q5_0.bin",
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q5_0.bin",
         size: 574_041_195,
@@ -49,7 +49,7 @@ pub const MODELS: &[ModelInfo] = &[
     ModelInfo {
         id: "gemma-4-e2b",
         kind: Kind::Llm,
-        label: "Gemma 4 E2B (Q4_K_M)",
+        label: "Gemma",
         file: "gemma-4-E2B-it-Q4_K_M.gguf",
         url: "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/0314792d7f1f7e229411f620751375812bb9faf2/gemma-4-E2B-it-Q4_K_M.gguf",
         size: 3_106_738_272,
@@ -59,7 +59,7 @@ pub const MODELS: &[ModelInfo] = &[
     ModelInfo {
         id: "kanana-2-1.3b",
         kind: Kind::Llm,
-        label: "Kanana-2 1.3B (Q4_K_M)",
+        label: "Kanana",
         file: "Kanana-2-1.3b-instruct-Q4_K_M.gguf",
         url: "https://huggingface.co/ssolunar/Kanana-2-1.3b-instruct-Q4_K_M-GGUF/resolve/cdf3d580c1ad5ae9bcee8028937158e8dee655e0/Kanana-2-1.3b-instruct-Q4_K_M.gguf",
         size: 853_655_776,

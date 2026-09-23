@@ -1,3 +1,5 @@
+pub mod admin;
+mod admin_crypto;
 mod commands;
 mod controller;
 pub mod local_llm;
@@ -132,6 +134,9 @@ pub fn run() {
             commands::record_shortcut_cancel,
             commands::app_info,
             commands::process_text_preview,
+            commands::admin_status,
+            commands::admin_unlock,
+            commands::admin_lock,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Sori");

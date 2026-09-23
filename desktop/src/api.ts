@@ -140,6 +140,12 @@ export interface CardContent {
 }
 
 
+export interface AdminStatus {
+  available: boolean;
+  unlocked: boolean;
+  has_default_keys: boolean;
+}
+
 type Res<T> = { Ok: T } | { Err: string };
 export interface KeyCheck {
   elevenlabs: Res<string>;
@@ -172,6 +178,9 @@ export const api = {
   getStats: () => invoke<Stats>("get_stats"),
   localModels: () => invoke<LocalModel[]>("local_models"),
   downloadLocalModel: (id: string) => invoke<void>("download_local_model", { id }),
+  adminStatus: () => invoke<AdminStatus>("admin_status"),
+  adminUnlock: (password: string) => invoke<Settings>("admin_unlock", { password }),
+  adminLock: () => invoke<Settings>("admin_lock"),
   pauseLocalDownload: (id: string) => invoke<void>("pause_local_download", { id }),
   cancelLocalDownload: (id: string) => invoke<void>("cancel_local_download", { id }),
   deleteLocalModel: (id: string) => invoke<void>("delete_local_model", { id }),

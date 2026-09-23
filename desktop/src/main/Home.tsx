@@ -329,7 +329,7 @@ function Setup(props: { settings: Settings; perms: PermState | null; save: (s: S
                 <div className="grow">
                   {local ? (
                     <>
-                      <b>{L("On-device speech model", "로컬 음성 인식 모델")}</b>
+                      <b>{L("Local AI · speech (Whisper)", "로컬 AI · 음성 인식 (Whisper)")}</b>
                       {L(` — one-time 574MB download; your voice never leaves this ${DEVICE}.`, ` — 574MB 한 번만 내려받으면 음성이 이 ${DEVICE} 밖으로 나가지 않아요.`)}
                       {!sttOk && (
                         <div style={{ marginTop: 6 }}>
@@ -355,7 +355,9 @@ function Setup(props: { settings: Settings; perms: PermState | null; save: (s: S
                 <div className="grow">
                   {localText ? (
                     <>
-                      <b>{L("On-device text model", "로컬 텍스트 모델")}</b>
+                      <b>
+                        {L("Local AI · text", "로컬 AI · 텍스트")} ({textModel?.label ?? "Gemma"})
+                      </b>
                       {L(
                         ` — cleans up what you said, on this ${DEVICE}. One-time download.`,
                         ` — 말한 내용을 이 ${DEVICE}에서 다듬어요. 한 번만 내려받으면 돼요.`,

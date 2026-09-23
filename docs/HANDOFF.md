@@ -31,7 +31,8 @@ Sori is a voice-dictation app: press a shortcut in any text field, speak, and a 
 - On-device speech: Whisper large-v3-turbo q5_0 (574 MB). Korean CER ~2.8%, ~0.5–1 s/sentence on M4 Pro.
 - On-device text model: llama.cpp `llama-server` sidecar + **Gemma 4 E2B** (3.1 GB, default) or Kanana-2 1.3B (0.85 GB). 0.4–1.8 s per dictation on M4 Pro GPU.
 - Model downloader: per-model state, parallel downloads, HTTP Range resume (also after quitting), automatic retries with backoff, disk-space check, SHA-256 verification, pinned Hugging Face revisions, pause/resume/cancel/delete, progress in sidebar + Home + Settings.
-- Optional cloud engines: ElevenLabs Scribe v2 (speech), OpenRouter (text; default model `google/gemini-3.8-flash`). Personal builds can bake default keys from `.env.local`; team/CI builds never do.
+- **Admin mode** (owner only, `desktop/src-tauri/src/admin.rs`): cloud engines — ElevenLabs Scribe v2 (speech), OpenRouter (text; default `google/gemini-3.8-flash`) — API keys and cloud model choice require unlocking with the owner's password. Locked ⇒ the backend forces Local AI and clears keys (`admin::enforce_policy`, applied on load, save and lock). Builds bake a salted PBKDF2-SHA256 verifier (600k rounds) from `SORI_ADMIN_PASSWORD` (`.env.local` or CI secret); personal builds also bake the owner's keys AES-256-GCM-encrypted under the password-derived key (`build.rs`, `src/admin_crypto.rs`) — no plaintext keys in any binary. Unlock state persists per device in `admin.key` until Lock. Check: `SORI_ADMIN_PASSWORD=… cargo run -p sori --example admin_check -- <password>`.
+- UI names local models simply: "Local AI — Whisper (574 MB)", "Gemma (3.1 GB)", "Kanana (0.85 GB)" — no version/quantization details (owner's request).
 - Developer mode: ~200 dev terms as recognition hints, tech-term restoration in cleanup, per-app tone.
 - Prompts tuned for the main use case (coding-agent prompts) — see §4.
 
@@ -59,6 +60,7 @@ Work through this on a real Windows PC. Each item says what to expect and where 
 ### Install & first run
 - [ ] Installer runs per-user without an admin prompt (`bundle.windows.nsis.installMode = currentUser`). SmartScreen warning is expected (unsigned).
 - [ ] Main window opens; Home shows "Get set up" with Microphone, speech model, text model (no Accessibility step on Windows).
+- [ ] Settings → AI shows only Local AI; Admin mode unlocks with the owner's password only if the CI build had the `SORI_ADMIN_PASSWORD` secret (otherwise "not available in this build").
 - [ ] "Set up everything" → Windows mic consent if needed; both downloads start in parallel; sidebar shows two pills with %.
 - [ ] Quit mid-download (tray → Quit), relaunch → downloads resume from the same % (Range). Pull the network cable → "retrying (n/5)", then resumes.
 - [ ] After downloads: log shows `local stt loaded …` and `llama-server ready: gemma-4-e2b on :<port>` then `local llm primed`. **Record the startup time and whether Vulkan picked the GPU** (see `llama-server.log`: look for `ggml_vulkan: Found N Vulkan devices` and `offloaded N/N layers to GPU`).
@@ -180,7 +182,8 @@ npm --prefix desktop run dev   # UI with mock backend: http://localhost:1420/?wi
 ```
 
 ## 6. Rules of the road
-- Never commit `.env.local` or any key. Never distribute a `build-mac.sh` build (it bakes the owner's keys); share `build-team.sh` / CI builds only. `build-team.sh` refuses to package if a key leaks.
+- Never commit `.env.local` or any key. Share `build-team.sh` / CI builds only — a `build-mac.sh` build carries the owner's keys (encrypted, but still). `build-team.sh` refuses to package if a plaintext key leaks.
+- Cloud features must stay behind admin mode: anything new that uses an API key must respect `admin::enforce_policy` / `app.admin.is_unlocked()`.
 - Model downloads must stay pinned (URL revision + size + SHA-256 in `models.rs`); update all three together.
 - The llama.cpp version is pinned in `scripts/build-llama-server.sh` (`LLAMA_CPP_TAG`). Upgrade deliberately and re-run the evals.
 - Keep UI strings bilingual via `L("English", "한국어")`.

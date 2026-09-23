@@ -5,7 +5,7 @@
 Built first for **dictating prompts to AI coding agents** (Claude Code, Codex, Cursor): cleanup reads misheard words in a developer context and restates what you said as a clear instruction — situation, request, constraints — while keeping every "don't do X" and "maybe".
 
 - **Fully on-device by default** — Whisper large-v3-turbo for speech, and a small language model (Gemma 4 E2B via llama.cpp) for cleanup. Metal on macOS, Vulkan on Windows (integrated graphics work). No keys, no account, nothing leaves your computer.
-- **Optional cloud engines** — ElevenLabs Scribe for speech, OpenRouter (e.g. Gemini 3.8 Flash) for sharper writing.
+- **Cloud engines are owner-only** — ElevenLabs Scribe (speech) and OpenRouter (text) sit behind a password-protected **admin mode**; everyone else uses Local AI.
 - **Translate** as you speak, and **Ask anything** about selected text ("make this more polite", "summarize").
 - Developer-aware: restores misheard tech terms (`useEffect`, React Query, `git rebase`…), per-app tone (email vs chat vs code editor vs AI prompt).
 - English and Korean UI.
@@ -74,7 +74,20 @@ npm --prefix desktop ci
 cd desktop && npx tauri build --bundles nsis
 ```
 
-`build-mac.sh` bakes default API keys from a git-ignored `.env.local` (`ELEVENLABS_API_KEY=…`, `OPENROUTER_API_KEY=…`) for your own machine only. **Never distribute that build** — use `build-team.sh` / CI builds, which contain no keys.
+### Admin mode and API keys
+
+Cloud engines and API keys are available only in **admin mode** (Settings → AI → Admin), unlocked with the owner's password. Without it the backend forces Local AI and ignores any keys — it isn't just hidden in the UI.
+
+```bash
+./scripts/set-admin-password.sh     # hidden prompt; writes SORI_ADMIN_PASSWORD to the git-ignored .env.local
+./scripts/build-mac.sh              # rebuild
+gh secret set SORI_ADMIN_PASSWORD   # optional: admin mode in CI (Windows/macOS) builds too
+```
+
+- Builds bake only a salted PBKDF2 verifier of the password (600k rounds), never the password.
+- Personal builds (`build-mac.sh`) also bake your keys from `.env.local` (`ELEVENLABS_API_KEY`, `OPENROUTER_API_KEY`), **AES-256-GCM-encrypted with a key derived from the password** — no plaintext keys in the binary; unlocking decrypts them. Use a strong password.
+- Team and CI builds (`SORI_TEAM_BUILD=1`) contain no keys at all; after unlocking you type keys yourself, stored only on that device.
+- An unlock is remembered per device (`admin.key` next to the settings) until you press **Lock**, which also removes the keys from that device.
 
 UI-only development with mock data: `npm --prefix desktop run dev`, then open `http://localhost:1420/?window=main` (or `hud`, `card`).
 

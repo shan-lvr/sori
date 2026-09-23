@@ -13,8 +13,11 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # Shareable builds never contain API keys; they default to on-device STT + Claude Code.
+  # Shareable builds never contain API keys; everyone gets Local AI.
   SORI_TEAM_BUILD: "1"
+  # Optional: lets the owner unlock admin mode (cloud engines + typing their own keys) in CI
+  # builds. Only a salted PBKDF2 verifier is baked in. Set with `gh secret set SORI_ADMIN_PASSWORD`.
+  SORI_ADMIN_PASSWORD: ${{ secrets.SORI_ADMIN_PASSWORD }}
 
 jobs:
   test:

@@ -1,8 +1,9 @@
 import { ReactNode, useEffect, useState } from "react";
 import { isWin, on as listen, PASTE, DEVICE } from "../bridge";
-import { api, isOk, keyLabel, KeyCheck, PermState, Settings, Shortcut, sortKeys, TranslationTarget } from "../api";
+import { AdminStatus, api, isOk, keyLabel, KeyCheck, PermState, Settings, Shortcut, sortKeys, TranslationTarget } from "../api";
 import { type L, useL, useLang } from "../i18n";
 import { LocalModelControl } from "./ModelDownload";
+import { useToast } from "./toast";
 import { IconGear, IconGlobe, IconInfo, IconKeyboard, IconMic, IconSpark, IconUser, IconX } from "../icons";
 
 type Tab = "general" | "shortcuts" | "language" | "audio" | "ai" | "personal" | "about";
@@ -62,8 +63,8 @@ const oneStepPresets = (L: L): [string, string][] => [
 ];
 /** On-device text models (ids match desktop/src-tauri/src/models.rs). */
 const localLlms = (L: L): [string, string][] => [
-  ["gemma-4-e2b", L("Gemma 4 E2B — recommended (3.1 GB)", "Gemma 4 E2B — 추천 (3.1 GB)")],
-  ["kanana-2-1.3b", L("Kanana-2 1.3B — fastest (0.85 GB)", "Kanana-2 1.3B — 가장 빠름 (0.85 GB)")],
+  ["gemma-4-e2b", L("Gemma — recommended (3.1 GB)", "Gemma — 추천 (3.1 GB)")],
+  ["kanana-2-1.3b", L("Kanana — fastest (0.85 GB)", "Kanana — 가장 빠름 (0.85 GB)")],
 ];
 const sttLangs = (L: L): [string, string][] => [
   ["", L("Auto-detect (best for mixed Korean/English)", "자동 감지 (한/영 섞어 말하기 추천)")],
@@ -537,11 +538,81 @@ function ModelPicker(p: { value: string; presets: [string, string][]; onChange: 
   );
 }
 
+function AdminPanel({ admin, onChange }: { admin: AdminStatus | null; onChange: (s: Settings) => void }) {
+  const L = useL();
+  const toast = useToast();
+  const [pw, setPw] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  if (!admin) return null;
+  const unlock = async () => {
+    if (!pw) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      onChange(await api.adminUnlock(pw));
+      setPw("");
+      toast(L("Admin mode unlocked on this device", "이 기기에서 관리자 모드를 켰어요"));
+    } catch (e) {
+      setErr(String(e).includes("Wrong") ? L("Wrong password", "비밀번호가 틀렸어요") : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const lock = async () => {
+    onChange(await api.adminLock());
+    toast(L("Admin mode locked — back to Local AI only", "관리자 모드를 껐어요 — 로컬 AI만 사용해요"));
+  };
+  return (
+    <Row
+      title={L("Admin mode", "관리자 모드")}
+      desc={
+        !admin.available
+          ? L("Not available in this build. Cloud engines and API keys are for the owner only.", "이 빌드에서는 사용할 수 없어요. 클라우드 엔진과 API 키는 소유자 전용이에요.")
+          : admin.unlocked
+            ? L(
+                "Unlocked on this device: cloud engines (ElevenLabs, OpenRouter), API keys and model choice are available. Lock to go back to Local AI and remove the keys from this device.",
+                "이 기기에서 켜져 있어요: 클라우드 엔진(ElevenLabs, OpenRouter), API 키, 모델 선택을 쓸 수 있어요. 끄면 로컬 AI로 돌아가고 이 기기의 키가 지워져요.",
+              )
+            : L(
+                "Cloud engines (ElevenLabs, OpenRouter) and API keys are for the owner only. Everyone else uses Local AI — private, free, offline.",
+                "클라우드 엔진(ElevenLabs, OpenRouter)과 API 키는 소유자 전용이에요. 그 외에는 로컬 AI를 써요 — 비공개 · 무료 · 오프라인.",
+              )
+      }
+    >
+      {admin.available &&
+        (admin.unlocked ? (
+          <button className="btn small" onClick={lock}>
+            {L("Lock", "잠그기")}
+          </button>
+        ) : (
+          <div style={{ width: "100%", display: "grid", gap: 6 }}>
+            <div className="key-field">
+              <input
+                className="input"
+                type="password"
+                autoComplete="off"
+                placeholder={L("Admin password", "관리자 비밀번호")}
+                value={pw}
+                onChange={(e) => setPw(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && unlock()}
+              />
+              <button className="btn small primary" disabled={!pw || busy} onClick={unlock}>
+                {busy ? L("Checking…", "확인 중…") : L("Unlock", "잠금 해제")}
+              </button>
+            </div>
+            {err && <span className="key-status bad">✕ {err}</span>}
+          </div>
+        ))}
+    </Row>
+  );
+}
+
 function AiKeys({ settings: s, save }: Props) {
   const L = useL();
+  const [admin, setAdmin] = useState<AdminStatus | null>(null);
   const [check, setCheck] = useState<KeyCheck | null>(null);
   const [checking, setChecking] = useState(false);
-  const [hasDefaults, setHasDefaults] = useState(false);
   const [previewIn, setPreviewIn] = useState(
     L(
       "um so the meeting tomorrow is at three, no wait, four, and uh for the demo we need first the laptop second the slides and third the, the business cards",
@@ -551,13 +622,18 @@ function AiKeys({ settings: s, save }: Props) {
   const [previewMode, setPreviewMode] = useState<"dictate" | "translate">("dictate");
   const [previewOut, setPreviewOut] = useState("");
   const [previewBusy, setPreviewBusy] = useState(false);
+  const refreshAdmin = () => api.adminStatus().then(setAdmin).catch(() => {});
   useEffect(() => {
-    api.appInfo().then((i) => setHasDefaults(i.has_default_keys));
+    refreshAdmin();
   }, []);
+  const unlocked = !!admin?.unlocked;
   const reset = async (which: "elevenlabs" | "openrouter") => {
     await api.resetApiKey(which);
-    const next = await api.getSettings();
+    save(await api.getSettings());
+  };
+  const onAdminChange = (next: Settings) => {
     save(next);
+    refreshAdmin();
   };
   const local = s.llm_provider === "local";
   const needEleven = s.stt_engine === "elevenlabs";
@@ -569,52 +645,51 @@ function AiKeys({ settings: s, save }: Props) {
         <h3>{L("Speech recognition", "음성 인식")}</h3>
         <Row
           title={L("Engine", "엔진")}
-          desc={
-            <>
-              <b>{L("On-device Whisper", "로컬 Whisper")}</b>
-              {L(
-                `: runs on this ${DEVICE}, audio never leaves it, no key needed (Korean CER ~2.8%, ~0.5–1s per sentence, ~850MB RAM while on). `,
-                `: 이 ${DEVICE}에서 처리해 음성이 밖으로 나가지 않고 키도 필요 없음(한국어 CER 약 2.8%, 문장당 약 0.5~1초, 켜져 있는 동안 메모리 약 850MB). `,
-              )}
-              <b>ElevenLabs</b>
-              {L(": cloud, most accurate (Korean CER 2.0%), needs an API key.", ": 클라우드, 가장 정확(한국어 CER 2.0%), API 키 필요.")}
-            </>
-          }
+          desc={L(
+            `Local AI (Whisper) runs on this ${DEVICE}: your voice never leaves it, no key needed, ~0.5–1 s per sentence.`,
+            `로컬 AI(Whisper)가 이 ${DEVICE}에서 처리해요: 음성이 밖으로 나가지 않고 키도 필요 없어요. 문장당 약 0.5~1초.`,
+          )}
         >
-          <select className="select" value={s.stt_engine} onChange={(e) => save({ ...s, stt_engine: e.target.value as Settings["stt_engine"] })}>
-            <option value="local">{L("On-device Whisper large-v3-turbo — offline", "로컬 Whisper large-v3-turbo — 오프라인")}</option>
-            <option value="elevenlabs">{L("ElevenLabs Scribe v2 — cloud", "ElevenLabs Scribe v2 — 클라우드")}</option>
-          </select>
+          {unlocked ? (
+            <select className="select" value={s.stt_engine} onChange={(e) => save({ ...s, stt_engine: e.target.value as Settings["stt_engine"] })}>
+              <option value="local">{L("Local AI — Whisper (574 MB)", "로컬 AI — Whisper (574 MB)")}</option>
+              <option value="elevenlabs">{L("ElevenLabs — cloud (admin)", "ElevenLabs — 클라우드 (관리자)")}</option>
+            </select>
+          ) : (
+            <span className="key-status ok">{L("Local AI — Whisper (574 MB)", "로컬 AI — Whisper (574 MB)")}</span>
+          )}
           {s.stt_engine === "elevenlabs" ? (
             <select className="select" value={s.stt_model} onChange={(e) => save({ ...s, stt_model: e.target.value })}>
               <option value="scribe_v2">{L("scribe_v2 — recommended", "scribe_v2 — 추천")}</option>
               <option value="scribe_v1">scribe_v1</option>
             </select>
           ) : (
-            <LocalModelControl model={s.local_model} language={s.stt_language} hasEleven={!!s.elevenlabs_api_key.trim()} />
+            <LocalModelControl model={s.local_model} language={s.stt_language} hasEleven={unlocked && !!s.elevenlabs_api_key.trim()} />
           )}
         </Row>
       </div>
       <div className="set-section">
         <h3>{L("Text AI — cleanup, translation, Ask", "텍스트 AI — 다듬기 · 번역 · Ask")}</h3>
-        <Row
-          title={L("Engine", "엔진")}
-          desc={L(
-            "On-device runs a small language model on this computer's GPU (integrated graphics work): private, free, offline. OpenRouter uses a cloud model with an API key — sharper writing, ~1s.",
-            "로컬은 이 컴퓨터 GPU(내장 그래픽 포함)에서 작은 언어 모델을 돌려요: 비공개·무료·오프라인. OpenRouter는 API 키로 클라우드 모델을 써요 — 글이 더 매끄럽고 약 1초.",
-          )}
-        >
-          <select className="select" value={s.llm_provider} onChange={(e) => save({ ...s, llm_provider: e.target.value as Settings["llm_provider"] })}>
-            <option value="local">{L("On-device — private, free, offline", "로컬 — 비공개 · 무료 · 오프라인")}</option>
-            <option value="openrouter">{L("OpenRouter — cloud, API key", "OpenRouter — 클라우드, API 키")}</option>
-          </select>
-        </Row>
+        {unlocked && (
+          <Row
+            title={L("Engine", "엔진")}
+            desc={L(
+              "Local AI runs a small language model on this computer's GPU (integrated graphics work). OpenRouter uses a cloud model — sharper writing, ~1 s.",
+              "로컬 AI는 이 컴퓨터 GPU(내장 그래픽 포함)에서 작은 언어 모델을 돌려요. OpenRouter는 클라우드 모델을 써요 — 글이 더 매끄럽고 약 1초.",
+            )}
+          >
+            <select className="select" value={s.llm_provider} onChange={(e) => save({ ...s, llm_provider: e.target.value as Settings["llm_provider"] })}>
+              <option value="local">{L("Local AI — private, free, offline", "로컬 AI — 비공개 · 무료 · 오프라인")}</option>
+              <option value="openrouter">{L("OpenRouter — cloud (admin)", "OpenRouter — 클라우드 (관리자)")}</option>
+            </select>
+          </Row>
+        )}
         {local ? (
           <Row
-            title={L("Model", "모델")}
+            title={unlocked ? L("Local AI model", "로컬 AI 모델") : L("Local AI", "로컬 AI")}
             desc={L(
-              "Gemma 4 E2B: ~1s per sentence on Apple Silicon, ~2–3s on integrated graphics. Kanana-2 is about twice as fast but polishes less and sometimes drops a detail.",
-              "Gemma 4 E2B: Apple Silicon에서 문장당 약 1초, 내장 그래픽에서 약 2~3초. Kanana-2는 약 2배 빠르지만 덜 다듬고 가끔 내용을 빠뜨려요.",
+              "Runs on this computer's GPU (integrated graphics work): ~1 s per sentence on Apple Silicon, ~2–3 s on integrated graphics. Kanana is about twice as fast but polishes less.",
+              "이 컴퓨터 GPU(내장 그래픽 포함)에서 돌아가요: Apple Silicon에서 문장당 약 1초, 내장 그래픽에서 약 2~3초. Kanana는 약 2배 빠르지만 덜 다듬어요.",
             )}
           >
             <select className="select" value={s.local_llm_model} onChange={(e) => save({ ...s, local_llm_model: e.target.value })}>
@@ -654,6 +729,11 @@ function AiKeys({ settings: s, save }: Props) {
         </Row>
       </div>
       <div className="set-section">
+        <h3>{L("Admin", "관리자")}</h3>
+        <AdminPanel admin={admin} onChange={onAdminChange} />
+      </div>
+      {unlocked && (
+      <div className="set-section">
         <h3>{L("API keys", "API 키")}</h3>
         {!needEleven && !needOpenRouter && (
           <p className="hint">{L("Not needed with your current setup — everything runs on-device.", "현재 설정에서는 필요 없어요 — 모두 기기 안에서 처리돼요.")}</p>
@@ -674,7 +754,7 @@ function AiKeys({ settings: s, save }: Props) {
             placeholder="sk_…"
             value={s.elevenlabs_api_key}
             onSave={(v) => save({ ...s, elevenlabs_api_key: v })}
-            onReset={hasDefaults ? () => reset("elevenlabs") : undefined}
+            onReset={admin?.has_default_keys ? () => reset("elevenlabs") : undefined}
           />
           {check && (
             <span className={`key-status ${isOk(check.elevenlabs) ? "ok" : "bad"}`}>
@@ -695,7 +775,7 @@ function AiKeys({ settings: s, save }: Props) {
             placeholder="sk-or-v1-…"
             value={s.openrouter_api_key}
             onSave={(v) => save({ ...s, openrouter_api_key: v })}
-            onReset={hasDefaults ? () => reset("openrouter") : undefined}
+            onReset={admin?.has_default_keys ? () => reset("openrouter") : undefined}
           />
           {check && (
             <span className={`key-status ${isOk(check.openrouter) ? "ok" : "bad"}`}>
@@ -718,7 +798,8 @@ function AiKeys({ settings: s, save }: Props) {
           {checking ? L("Checking…", "확인 중…") : L("Test keys", "연결 테스트")}
         </button>
       </div>
-      {!local && (
+      )}
+      {unlocked && !local && (
         <div className="set-section">
           <h3>{L("Processing (experimental)", "처리 방식 (실험)")}</h3>
           <Row
@@ -890,8 +971,8 @@ function About({ settings: s }: Props) {
         </Row>
         <Row
           title={L("How it works", "처리 경로")}
-          desc={`${L("Voice", "음성")} → ${s.stt_engine === "local" ? L("on-device Whisper", "로컬 Whisper") : "ElevenLabs Scribe v2"} → ${
-            s.llm_provider === "local" ? L(`on-device ${s.local_llm_model}`, `로컬 ${s.local_llm_model}`) : `OpenRouter (${s.llm_model})`
+          desc={`${L("Voice", "음성")} → ${s.stt_engine === "local" ? L("Local AI (Whisper)", "로컬 AI(Whisper)") : "ElevenLabs"} → ${
+            s.llm_provider === "local" ? L("Local AI", "로컬 AI") : `OpenRouter (${s.llm_model})`
           } → ${L("pasted at your cursor", "커서 위치에 붙여넣기")}${s.copy_to_clipboard ? L(" + clipboard", " + 클립보드") : ""}. ${L(
             `History and audio stay on this ${DEVICE}.`,
             `기록과 오디오는 이 ${DEVICE}에만 저장됩니다.`,

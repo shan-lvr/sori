@@ -15,6 +15,7 @@ use sori_core::store::{HistoryEntry, Store};
 use sori_core::{audio, pipeline, text, AskAction, Context, Mode};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
 
+use crate::admin::{self, Admin};
 use crate::local_llm::{LlmServer, LocalLlm};
 use crate::local_stt::{self, LocalStt};
 use crate::models::ModelStore;
@@ -70,6 +71,7 @@ pub struct App {
     pub settings: RwLock<Settings>,
     pub store: Mutex<Store>,
     pub recorder: Recorder,
+    pub admin: Admin,
     pub models: Arc<ModelStore>,
     pub local_stt: Arc<LocalStt>,
     pub llm_server: Arc<LlmServer>,
@@ -92,8 +94,6 @@ fn now_ms() -> i64 {
 
 pub fn default_settings() -> Settings {
     let mut s = Settings::default();
-    s.elevenlabs_api_key = option_env!("SORI_DEFAULT_ELEVENLABS_KEY").unwrap_or("").to_string();
-    s.openrouter_api_key = option_env!("SORI_DEFAULT_OPENROUTER_KEY").unwrap_or("").to_string();
     // No Fn key on Windows keyboards: hold Ctrl+Win (Typeless / Wispr Flow convention).
     if cfg!(windows) {
         let c = |keys: &[&str]| keys.iter().map(|k| k.to_string()).collect::<Vec<_>>();
@@ -145,7 +145,13 @@ pub fn load_settings(path: &PathBuf) -> Settings {
 impl App {
     pub fn new(handle: AppHandle, data_dir: PathBuf, config_path: PathBuf) -> anyhow::Result<Arc<Self>> {
         std::fs::create_dir_all(data_dir.join("audio"))?;
-        let settings = load_settings(&config_path);
+        let admin = Admin::new(config_path.with_file_name("admin.key"));
+        let mut settings = load_settings(&config_path);
+        // Cloud engines + API keys are owner-only: without admin mode, everything is on-device.
+        if admin.is_unlocked() {
+            admin.fill_default_keys(&mut settings);
+        }
+        admin::enforce_policy(&mut settings, admin.is_unlocked());
         let store = Store::open(&data_dir.join("sori.db"))?;
         let engine = Arc::new(Mutex::new(Engine::new(&settings.shortcuts)));
         let http = reqwest::Client::builder()
@@ -159,6 +165,7 @@ impl App {
             settings: RwLock::new(settings),
             store: Mutex::new(store),
             recorder: Recorder::spawn(),
+            admin,
             local_stt: Arc::new(LocalStt::new(models.clone())),
             llm_server: Arc::new(LlmServer::new(models.clone(), data_dir.join("llama-server.log"))),
             models,

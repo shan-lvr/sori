@@ -7,3 +7,10 @@ opt-level = 3
 lto = "thin"
 codegen-units = 4
 strip = true
+
+# PBKDF2 (600k rounds) in desktop/src-tauri/build.rs would take seconds unoptimized.
+[profile.dev.build-override]
+opt-level = 3
+[profile.release.build-override]
+opt-level = 3
+

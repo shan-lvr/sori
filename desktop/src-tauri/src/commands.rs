@@ -25,8 +25,9 @@ pub fn get_settings(app: S) -> Settings {
 }
 
 #[tauri::command]
-pub fn save_settings(app: S, settings: Settings) -> R<Settings> {
+pub fn save_settings(app: S, mut settings: Settings) -> R<Settings> {
     let prev = app.settings.read().clone();
+    crate::admin::enforce_policy(&mut settings, app.admin.is_unlocked());
     *app.settings.write() = settings;
     app.save_settings_file().map_err(e)?;
     apply_settings(&app, Some(&prev));
@@ -102,12 +103,12 @@ pub fn restore_fn_usage(app: &Arc<App>) {
 
 #[tauri::command]
 pub fn reset_api_key(app: S, which: String) -> R<Settings> {
-    let d = default_settings();
+    let (eleven, openrouter) = app.admin.default_keys().ok_or("Admin mode is locked or this build has no default keys")?;
     {
         let mut s = app.settings.write();
         match which.as_str() {
-            "elevenlabs" => s.elevenlabs_api_key = d.elevenlabs_api_key,
-            "openrouter" => s.openrouter_api_key = d.openrouter_api_key,
+            "elevenlabs" => s.elevenlabs_api_key = eleven,
+            "openrouter" => s.openrouter_api_key = openrouter,
             _ => return Err("unknown key".into()),
         }
     }
@@ -123,6 +124,9 @@ pub struct KeyCheck {
 
 #[tauri::command]
 pub async fn test_api_keys(app: S<'_>, elevenlabs: String, openrouter: String) -> R<KeyCheck> {
+    if !app.admin.is_unlocked() {
+        return Err("Admin mode is locked".into());
+    }
     // ElevenLabs: transcribe half a second of silence (works with STT-scoped keys).
     let silence = sori_core::audio::encode_wav(&vec![0.0; 8000], 16_000);
     let el = match sori_core::stt::transcribe(&app.http, &elevenlabs, "scribe_v2", silence, None, &[]).await {
@@ -391,7 +395,7 @@ pub fn app_info(app: S, handle: AppHandle) -> AppInfo {
         version: handle.package_info().version.to_string(),
         data_dir: app.data_dir.to_string_lossy().to_string(),
         config_path: app.config_path.to_string_lossy().to_string(),
-        has_default_keys: !d.elevenlabs_api_key.is_empty() && !d.openrouter_api_key.is_empty(),
+        has_default_keys: app.admin.status().has_default_keys,
         platform: std::env::consts::OS.into(),
         default_shortcuts: d.shortcuts,
     }
@@ -411,3 +415,41 @@ pub async fn process_text_preview(app: S<'_>, text: String, mode: String) -> R<S
     let p = pipeline::process_text(llm.as_ref(), &settings, &dict, &text, &mode, &ctx).await.map_err(e)?;
     Ok(p.output)
 }
+
+// ---------------------------------------------------------------- admin mode
+
+#[tauri::command]
+pub fn admin_status(app: S) -> crate::admin::AdminStatus {
+    app.admin.status()
+}
+
+/// Unlock cloud engines + API keys with the owner's password; fills in the owner's default keys.
+#[tauri::command]
+pub async fn admin_unlock(app: S<'_>, password: String) -> R<Settings> {
+    let a = app.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || a.admin.unlock(&password)).await.map_err(e)?.map_err(e)?;
+    let prev = app.settings.read().clone();
+    {
+        let mut s = app.settings.write();
+        app.admin.fill_default_keys(&mut s);
+    }
+    app.save_settings_file().map_err(e)?;
+    apply_settings(&app, Some(&prev));
+    let s = app.settings.read().clone();
+    let _ = app.handle.emit("settings-changed", &s);
+    Ok(s)
+}
+
+/// Lock again: back to on-device engines; API keys are removed from this device's settings.
+#[tauri::command]
+pub fn admin_lock(app: S) -> R<Settings> {
+    app.admin.lock();
+    let prev = app.settings.read().clone();
+    crate::admin::enforce_policy(&mut app.settings.write(), false);
+    app.save_settings_file().map_err(e)?;
+    apply_settings(&app, Some(&prev));
+    let s = app.settings.read().clone();
+    let _ = app.handle.emit("settings-changed", &s);
+    Ok(s)
+}
+
