@@ -14,10 +14,8 @@ export interface Settings {
   stt_language: string;
   llm_model: string;
   ask_model: string;
-  llm_provider: "openrouter" | "claude_code";
-  claude_model: string;
-  claude_ask_model: string;
-  claude_effort: string;
+  llm_provider: "local" | "openrouter";
+  local_llm_model: string;
   cleanup_style: "polished" | "faithful";
   pipeline_mode: "two_step" | "one_step";
   one_step_model: string;
@@ -75,8 +73,10 @@ export interface ModelDownload {
 }
 export interface LocalModel {
   id: string;
+  kind: "stt" | "llm";
   label: string;
   size: number;
+  license: string;
   installed: boolean;
   loaded: boolean;
   downloading: boolean;
@@ -139,15 +139,6 @@ export interface CardContent {
   copied: boolean;
 }
 
-export interface ClaudeStatus {
-  installed: boolean;
-  path: string | null;
-  version: string | null;
-  logged_in: boolean;
-  auth_method: string;
-  installing: boolean;
-  logging_in: boolean;
-}
 
 type Res<T> = { Ok: T } | { Err: string };
 export interface KeyCheck {
@@ -181,7 +172,7 @@ export const api = {
   getStats: () => invoke<Stats>("get_stats"),
   localModels: () => invoke<LocalModel[]>("local_models"),
   downloadLocalModel: (id: string) => invoke<void>("download_local_model", { id }),
-  pauseLocalDownload: () => invoke<void>("pause_local_download"),
+  pauseLocalDownload: (id: string) => invoke<void>("pause_local_download", { id }),
   cancelLocalDownload: (id: string) => invoke<void>("cancel_local_download", { id }),
   deleteLocalModel: (id: string) => invoke<void>("delete_local_model", { id }),
   hudStop: () => invoke<void>("hud_stop"),
@@ -201,12 +192,6 @@ export const api = {
     }>("app_info"),
   processTextPreview: (text: string, mode: "dictate" | "translate") =>
     invoke<string>("process_text_preview", { text, mode }),
-  claudeStatus: () => invoke<ClaudeStatus>("claude_status"),
-  claudeInstall: () => invoke<ClaudeStatus>("claude_install"),
-  claudeLogin: () => invoke<ClaudeStatus>("claude_login"),
-  claudeLoginCode: (code: string) => invoke<void>("claude_login_code", { code }),
-  claudeLoginCancel: () => invoke<void>("claude_login_cancel"),
-  claudeTest: () => invoke<string>("claude_test"),
 };
 
 export function isOk<T>(r: Res<T>): r is { Ok: T } {

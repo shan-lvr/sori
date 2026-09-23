@@ -1,7 +1,8 @@
-pub mod claude_cli;
 mod commands;
 mod controller;
+pub mod local_llm;
 pub mod local_stt;
+pub mod models;
 mod platform;
 mod recorder;
 mod selftest;
@@ -131,12 +132,6 @@ pub fn run() {
             commands::record_shortcut_cancel,
             commands::app_info,
             commands::process_text_preview,
-            commands::claude_status,
-            commands::claude_install,
-            commands::claude_login,
-            commands::claude_login_code,
-            commands::claude_login_cancel,
-            commands::claude_test,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Sori");
@@ -146,6 +141,7 @@ pub fn run() {
         RunEvent::Reopen { .. } => show_main(handle),
         RunEvent::Exit => {
             if let Some(state) = handle.try_state::<Arc<App>>() {
+                state.llm_server.kill_now();
                 commands::restore_fn_usage(&state);
             }
         }

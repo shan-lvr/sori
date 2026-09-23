@@ -2,7 +2,6 @@ import { ReactNode, useEffect, useState } from "react";
 import { isWin, on as listen, PASTE, DEVICE } from "../bridge";
 import { api, isOk, keyLabel, KeyCheck, PermState, Settings, Shortcut, sortKeys, TranslationTarget } from "../api";
 import { type L, useL, useLang } from "../i18n";
-import ClaudeSetup from "./ClaudeSetup";
 import { LocalModelControl } from "./ModelDownload";
 import { IconGear, IconGlobe, IconInfo, IconKeyboard, IconMic, IconSpark, IconUser, IconX } from "../icons";
 
@@ -61,10 +60,10 @@ const oneStepPresets = (L: L): [string, string][] => [
   ["google/gemini-3.1-flash-lite", L("Gemini 3.1 Flash Lite — fast, weaker on tech terms", "Gemini 3.1 Flash Lite — 빠르지만 개발 용어 약함")],
   ["google/gemini-3.5-flash-lite", "Gemini 3.5 Flash Lite"],
 ];
-const claudeModels = (L: L): [string, string][] => [
-  ["haiku", L("Claude Haiku — recommended, fastest", "Claude Haiku — 추천, 가장 빠름")],
-  ["sonnet", L("Claude Sonnet — smarter, ~2–3s", "Claude Sonnet — 더 똑똑함, 약 2~3초")],
-  ["opus", L("Claude Opus — smartest, slowest", "Claude Opus — 가장 똑똑하지만 느림")],
+/** On-device text models (ids match desktop/src-tauri/src/models.rs). */
+const localLlms = (L: L): [string, string][] => [
+  ["gemma-4-e2b", L("Gemma 4 E2B — recommended (3.1 GB)", "Gemma 4 E2B — 추천 (3.1 GB)")],
+  ["kanana-2-1.3b", L("Kanana-2 1.3B — fastest (0.85 GB)", "Kanana-2 1.3B — 가장 빠름 (0.85 GB)")],
 ];
 const sttLangs = (L: L): [string, string][] => [
   ["", L("Auto-detect (best for mixed Korean/English)", "자동 감지 (한/영 섞어 말하기 추천)")],
@@ -560,9 +559,9 @@ function AiKeys({ settings: s, save }: Props) {
     const next = await api.getSettings();
     save(next);
   };
-  const claude = s.llm_provider === "claude_code";
+  const local = s.llm_provider === "local";
   const needEleven = s.stt_engine === "elevenlabs";
-  const needOpenRouter = !claude || s.pipeline_mode === "one_step";
+  const needOpenRouter = !local || s.pipeline_mode === "one_step";
   return (
     <>
       <h2>AI</h2>
@@ -578,10 +577,7 @@ function AiKeys({ settings: s, save }: Props) {
                 `: 이 ${DEVICE}에서 처리해 음성이 밖으로 나가지 않고 키도 필요 없음(한국어 CER 약 2.8%, 문장당 약 0.5~1초, 켜져 있는 동안 메모리 약 850MB). `,
               )}
               <b>ElevenLabs</b>
-              {L(
-                ": cloud, most accurate (Korean CER 2.0%), needs an API key.",
-                ": 클라우드, 가장 정확(한국어 CER 2.0%), API 키 필요.",
-              )}
+              {L(": cloud, most accurate (Korean CER 2.0%), needs an API key.", ": 클라우드, 가장 정확(한국어 CER 2.0%), API 키 필요.")}
             </>
           }
         >
@@ -602,52 +598,34 @@ function AiKeys({ settings: s, save }: Props) {
       <div className="set-section">
         <h3>{L("Text AI — cleanup, translation, Ask", "텍스트 AI — 다듬기 · 번역 · Ask")}</h3>
         <Row
-          title={L("Provider", "제공자")}
+          title={L("Engine", "엔진")}
           desc={L(
-            "Claude Code uses your own Claude subscription through the Claude Code CLI (no API key; counts toward your plan's usage). OpenRouter uses an API key.",
-            "Claude Code는 Claude Code CLI를 통해 내 Claude 구독으로 실행해요 (API 키 불필요, 요금제 사용량에 포함). OpenRouter는 API 키를 씁니다.",
+            "On-device runs a small language model on this computer's GPU (integrated graphics work): private, free, offline. OpenRouter uses a cloud model with an API key — sharper writing, ~1s.",
+            "로컬은 이 컴퓨터 GPU(내장 그래픽 포함)에서 작은 언어 모델을 돌려요: 비공개·무료·오프라인. OpenRouter는 API 키로 클라우드 모델을 써요 — 글이 더 매끄럽고 약 1초.",
           )}
         >
           <select className="select" value={s.llm_provider} onChange={(e) => save({ ...s, llm_provider: e.target.value as Settings["llm_provider"] })}>
-            <option value="claude_code">{L("Claude Code — your Claude subscription", "Claude Code — 내 Claude 구독")}</option>
-            <option value="openrouter">{L("OpenRouter — API key", "OpenRouter — API 키")}</option>
+            <option value="local">{L("On-device — private, free, offline", "로컬 — 비공개 · 무료 · 오프라인")}</option>
+            <option value="openrouter">{L("OpenRouter — cloud, API key", "OpenRouter — 클라우드, API 키")}</option>
           </select>
         </Row>
-        {claude ? (
-          <>
-            <Row title="Claude Code" desc={L("Install the CLI and sign in once — each is one click.", "CLI 설치와 로그인은 한 번만, 각각 클릭 한 번이면 돼요.")} wide>
-              <ClaudeSetup />
-            </Row>
-            <Row
-              title={L("Model", "모델")}
-              desc={L(
-                "Sori keeps one Claude Code session running in the background, so each dictation only waits for the model itself.",
-                "Sori가 Claude Code 세션 하나를 백그라운드에 띄워 두기 때문에, 매번 모델 응답 시간만 기다리면 돼요.",
-              )}
-            >
-              <select className="select" value={s.claude_model} onChange={(e) => save({ ...s, claude_model: e.target.value })}>
-                {claudeModels(L).map(([v, l]) => (
-                  <option key={v} value={v}>
-                    {l}
-                  </option>
-                ))}
-              </select>
-              <select className="select" value={s.claude_effort} onChange={(e) => save({ ...s, claude_effort: e.target.value })}>
-                <option value="low">{L("Effort: low — fastest (recommended)", "추론: 낮음 — 가장 빠름 (추천)")}</option>
-                <option value="medium">{L("Effort: medium", "추론: 중간")}</option>
-                <option value="high">{L("Effort: high — slowest", "추론: 높음 — 가장 느림")}</option>
-              </select>
-            </Row>
-            <Row title={L("Ask anything model", "무엇이든 물어보기 모델")} desc={L("For editing, questions and writing help.", "편집·질문·글쓰기 도우미용.")}>
-              <select className="select" value={s.claude_ask_model} onChange={(e) => save({ ...s, claude_ask_model: e.target.value })}>
-                {claudeModels(L).map(([v, l]) => (
-                  <option key={v} value={v}>
-                    {l}
-                  </option>
-                ))}
-              </select>
-            </Row>
-          </>
+        {local ? (
+          <Row
+            title={L("Model", "모델")}
+            desc={L(
+              "Gemma 4 E2B: ~1s per sentence on Apple Silicon, ~2–3s on integrated graphics. Kanana-2 is about twice as fast but polishes less and sometimes drops a detail.",
+              "Gemma 4 E2B: Apple Silicon에서 문장당 약 1초, 내장 그래픽에서 약 2~3초. Kanana-2는 약 2배 빠르지만 덜 다듬고 가끔 내용을 빠뜨려요.",
+            )}
+          >
+            <select className="select" value={s.local_llm_model} onChange={(e) => save({ ...s, local_llm_model: e.target.value })}>
+              {localLlms(L).map(([v, l]) => (
+                <option key={v} value={v}>
+                  {l}
+                </option>
+              ))}
+            </select>
+            <LocalModelControl model={s.local_llm_model} language={s.stt_language} />
+          </Row>
         ) : (
           <>
             <Row title={L("Cleanup & translation model", "다듬기 · 번역 모델")} desc={L("The faster it is, the sooner your text is pasted.", "빠를수록 붙여넣기까지 짧아요.")}>
@@ -678,7 +656,7 @@ function AiKeys({ settings: s, save }: Props) {
       <div className="set-section">
         <h3>{L("API keys", "API 키")}</h3>
         {!needEleven && !needOpenRouter && (
-          <p className="hint">{L("Not needed with your current setup (on-device speech + Claude Code).", "현재 설정(로컬 음성 인식 + Claude Code)에서는 필요 없어요.")}</p>
+          <p className="hint">{L("Not needed with your current setup — everything runs on-device.", "현재 설정에서는 필요 없어요 — 모두 기기 안에서 처리돼요.")}</p>
         )}
         <Row
           title="ElevenLabs"
@@ -740,7 +718,7 @@ function AiKeys({ settings: s, save }: Props) {
           {checking ? L("Checking…", "확인 중…") : L("Test keys", "연결 테스트")}
         </button>
       </div>
-      {!claude && (
+      {!local && (
         <div className="set-section">
           <h3>{L("Processing (experimental)", "처리 방식 (실험)")}</h3>
           <Row
@@ -913,7 +891,7 @@ function About({ settings: s }: Props) {
         <Row
           title={L("How it works", "처리 경로")}
           desc={`${L("Voice", "음성")} → ${s.stt_engine === "local" ? L("on-device Whisper", "로컬 Whisper") : "ElevenLabs Scribe v2"} → ${
-            s.llm_provider === "claude_code" ? `Claude Code (${s.claude_model})` : `OpenRouter (${s.llm_model})`
+            s.llm_provider === "local" ? L(`on-device ${s.local_llm_model}`, `로컬 ${s.local_llm_model}`) : `OpenRouter (${s.llm_model})`
           } → ${L("pasted at your cursor", "커서 위치에 붙여넣기")}${s.copy_to_clipboard ? L(" + clipboard", " + 클립보드") : ""}. ${L(
             `History and audio stay on this ${DEVICE}.`,
             `기록과 오디오는 이 ${DEVICE}에만 저장됩니다.`,

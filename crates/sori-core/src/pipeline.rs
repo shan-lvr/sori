@@ -100,16 +100,18 @@ pub async fn process_text(
     let minimal = Some(json!({"effort": "minimal", "exclude": true}));
     match mode {
         Mode::Dictate => {
-            let (system, user) = prompts::dictate(s, ctx, dictionary, raw);
+            let local = s.local_llm();
+            let (system, user) = if local { prompts::dictate_local(s, dictionary, raw) } else { prompts::dictate(s, ctx, dictionary, raw) };
             let req = ChatRequest {
                 model: s.text_model(),
                 system,
                 user,
-                temperature: 0.2,
-                max_tokens: 4096,
+                temperature: if local { 0.1 } else { 0.2 },
+                max_tokens: if local { 1024 } else { 4096 },
                 reasoning: minimal,
                 json_mode: false,
                 web: false,
+                examples: if local { prompts::local_examples() } else { vec![] },
             };
             match llm.complete(&req).await {
                 Ok(out) => {
@@ -137,16 +139,22 @@ pub async fn process_text(
             }
         }
         Mode::Translate { target } => {
-            let (system, user) = prompts::translate(s, ctx, dictionary, raw, &target.name);
+            let (system, user, examples) = if s.local_llm() {
+                prompts::translate_local(s, dictionary, raw, &target.name)
+            } else {
+                let (system, user) = prompts::translate(s, ctx, dictionary, raw, &target.name);
+                (system, user, vec![])
+            };
             let req = ChatRequest {
                 model: s.text_model(),
                 system,
                 user,
-                temperature: 0.3,
+                temperature: if s.local_llm() { 0.1 } else { 0.3 },
                 max_tokens: 4096,
                 reasoning: minimal,
                 json_mode: false,
                 web: false,
+                examples,
             };
             let out = text::clean_llm_output(&llm.complete(&req).await?);
             Ok(Processed { output: out, action: AskAction::Insert, url: None, llm_ms: t.elapsed().as_millis() as u64, fallback_reason: None })
@@ -162,6 +170,7 @@ pub async fn process_text(
                 reasoning: Some(json!({"effort": "low", "exclude": true})),
                 json_mode: true,
                 web: false,
+                examples: vec![],
             };
             let content = llm.complete(&req).await?;
             let v = parse_json_loose(&content).unwrap_or_else(|| json!({"action": "answer", "text": content}));
@@ -196,6 +205,7 @@ pub async fn process_text(
                     reasoning: Some(json!({"effort": "low", "exclude": true})),
                     json_mode: false,
                     web: true,
+                    examples: vec![],
                 };
                 out = llm.complete(&req).await?.trim().to_string();
             }
@@ -239,6 +249,7 @@ pub async fn run_one_step(
         reasoning: Some(json!({"effort": "minimal", "exclude": true})),
         json_mode: false,
         web: false,
+        examples: vec![],
     };
     let out = text::clean_llm_output(&llm::chat_with_audio(http, &s.openrouter_api_key, &req, wav).await?);
     Ok(Outcome {

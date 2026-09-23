@@ -7,7 +7,7 @@ import { useToast } from "./toast";
 const ACTIVE = ["connecting", "downloading", "retrying", "verifying"];
 export const isActive = (d: ModelDownload | null | undefined) => !!d && ACTIVE.includes(d.state);
 
-const mb = (n: number) => `${Math.round(n / 1e6)} MB`;
+const mb = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.round(n / 1e6)} MB`);
 function eta(L: L, d: ModelDownload) {
   if (!d.bytes_per_sec) return "";
   const s = Math.max(1, Math.round((d.total - d.downloaded) / d.bytes_per_sec));
@@ -21,7 +21,7 @@ export function useLocalModel(id: string | undefined) {
   const refresh = () =>
     api
       .localModels()
-      .then((list) => setM(list.find((x) => x.id === id) ?? list[0] ?? null))
+      .then((list) => setM(list.find((x) => x.id === id) ?? null))
       .catch(() => {});
   useEffect(() => {
     refresh();
@@ -56,7 +56,7 @@ export function LocalModelControl({ model, language, hasEleven = true, compact =
   const d = m.download;
   const active = isActive(d);
   const start = () => api.downloadLocalModel(m.id).then(() => setTimeout(refresh, 300));
-  const pause = () => api.pauseLocalDownload();
+  const pause = () => api.pauseLocalDownload(m.id);
   const discard = async () => {
     if (!(await confirmDialog(L("Discard the downloaded part? You'll have to start from zero.", "받은 부분을 버릴까요? 처음부터 다시 받아야 해요."), L("Discard", "버리기")))) return;
     await api.cancelLocalDownload(m.id);
@@ -81,7 +81,7 @@ export function LocalModelControl({ model, language, hasEleven = true, compact =
             {L("Delete model", "모델 삭제")} ({mb(m.size)})
           </button>
         )}
-        {!compact && language === "" && (
+        {!compact && m.kind === "stt" && language === "" && (
           <span className="hint">
             {L(
               "Tip: pinning “Spoken language” in the Language tab makes on-device recognition about 2× faster (but hurts accuracy for the other language).",
@@ -197,9 +197,11 @@ export function LocalModelControl({ model, language, hasEleven = true, compact =
     <div className="dl">
       {!compact && (
         <span className="key-status bad">
-          {hasEleven
-            ? L("Not downloaded yet — ElevenLabs is used until then", "아직 받지 않았어요 — 받기 전에는 ElevenLabs로 처리해요")
-            : L("Not downloaded yet — dictation needs it", "아직 받지 않았어요 — 받아쓰기에 필요해요")}
+          {m.kind === "llm"
+            ? L("Not downloaded yet — until then your words are inserted without cleanup", "아직 받지 않았어요 — 받기 전에는 다듬지 않은 원문이 들어가요")
+            : hasEleven
+              ? L("Not downloaded yet — ElevenLabs is used until then", "아직 받지 않았어요 — 받기 전에는 ElevenLabs로 처리해요")
+              : L("Not downloaded yet — dictation needs it", "아직 받지 않았어요 — 받아쓰기에 필요해요")}
         </span>
       )}
       <button className="btn primary small" onClick={start}>
@@ -209,25 +211,36 @@ export function LocalModelControl({ model, language, hasEleven = true, compact =
   );
 }
 
-/** Sidebar pill: visible from anywhere while the model is downloading, paused or failed. */
-export function DownloadPill({ model, enabled, onOpen }: { model: string; enabled: boolean; onOpen: () => void }) {
+/** Sidebar pills: visible from anywhere while a selected model is downloading, paused or failed. */
+export function DownloadPills({ models, onOpen }: { models: string[]; onOpen: () => void }) {
+  return (
+    <>
+      {models.map((id) => (
+        <DownloadPill key={id} model={id} onOpen={onOpen} />
+      ))}
+    </>
+  );
+}
+
+function DownloadPill({ model, onOpen }: { model: string; onOpen: () => void }) {
   const L = useL();
-  const [m] = useLocalModel(enabled ? model : undefined);
-  if (!enabled || !m || m.installed) return null;
+  const [m] = useLocalModel(model);
+  if (!m || m.installed) return null;
+  const what = m.kind === "llm" ? L("Text model", "텍스트 모델") : L("Speech model", "음성 모델");
   const d = m.download;
   const done = isActive(d) ? d!.downloaded : d?.downloaded || m.partial;
   const pct = Math.min(100, Math.floor((done / Math.max(1, m.size)) * 100));
   const label = isActive(d)
     ? d!.state === "verifying"
-      ? L("Verifying model…", "모델 확인 중…")
+      ? `${what} · ${L("verifying…", "확인 중…")}`
       : d!.state === "retrying"
-        ? L(`Model ${pct}% · retrying`, `모델 ${pct}% · 재시도 중`)
-        : L(`Downloading model ${pct}%`, `모델 받는 중 ${pct}%`)
+        ? `${what} ${pct}% · ${L("retrying", "재시도 중")}`
+        : `${what} · ${L("downloading", "받는 중")} ${pct}%`
     : d?.state === "error"
-      ? L("Model download failed", "모델 다운로드 실패")
+      ? `${what} · ${L("download failed", "다운로드 실패")}`
       : m.partial > 0
-        ? L(`Model paused at ${pct}%`, `모델 ${pct}%에서 멈춤`)
-        : L("Speech model needed", "음성 모델 필요");
+        ? `${what} · ${L("paused at", "멈춤")} ${pct}%`
+        : `${what} ${L("needed", "필요")}`;
   const tone = d?.state === "error" ? "bad" : isActive(d) ? "" : "idle";
   return (
     <button className={`dl-pill ${tone}`} onClick={onOpen} title={L("Open Settings → AI", "설정 → AI 열기")}>

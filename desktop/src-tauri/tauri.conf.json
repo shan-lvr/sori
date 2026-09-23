@@ -101,7 +101,10 @@
       }
     },
     "publisher": "Sori",
-    "longDescription": "Voice dictation for any text field: speak naturally, Sori writes it up cleanly (on-device Whisper + Claude)."
+    "longDescription": "Voice dictation for any text field: speak naturally, Sori writes it up cleanly (on-device Whisper + Claude).",
+    "externalBin": [
+      "binaries/llama-server"
+    ]
   },
   "mainBinaryName": "Sori"
 }

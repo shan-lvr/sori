@@ -49,15 +49,10 @@ pub struct Settings {
     pub llm_model: String,
     /// Model for Ask anything / Help me write.
     pub ask_model: String,
-    /// Text model backend: `openrouter` (API key) | `claude_code` (local Claude Code CLI,
-    /// the user's own Claude subscription).
+    /// Text model backend: `local` (on-device llama.cpp, default) | `openrouter` (API key).
     pub llm_provider: String,
-    /// Claude Code CLI model alias for cleanup/translation (`haiku` = fastest).
-    pub claude_model: String,
-    /// Claude Code CLI model alias for Ask anything.
-    pub claude_ask_model: String,
-    /// Claude Code `--effort` (`low` = fastest).
-    pub claude_effort: String,
+    /// On-device text model id (see desktop `models.rs`).
+    pub local_llm_model: String,
     /// `two_step` (STT → LLM, default) | `one_step` (experimental: audio straight into a
     /// multimodal LLM for dictation/translation).
     pub pipeline_mode: String,
@@ -115,15 +110,13 @@ impl Default for Settings {
             elevenlabs_api_key: String::new(),
             openrouter_api_key: String::new(),
             stt_model: "scribe_v2".into(),
-            stt_engine: "elevenlabs".into(),
+            stt_engine: "local".into(),
             local_model: "whisper-large-v3-turbo-q5_0".into(),
             stt_language: String::new(),
             llm_model: "google/gemini-3.8-flash".into(),
             ask_model: "google/gemini-3.8-flash".into(),
-            llm_provider: "openrouter".into(),
-            claude_model: "haiku".into(),
-            claude_ask_model: "haiku".into(),
-            claude_effort: "low".into(),
+            llm_provider: "local".into(),
+            local_llm_model: "gemma-4-e2b".into(),
             pipeline_mode: "two_step".into(),
             one_step_model: "google/gemini-3.8-flash".into(),
             shortcuts: Shortcuts::default(),
@@ -153,18 +146,19 @@ impl Default for Settings {
 }
 
 impl Settings {
-    pub fn claude_code(&self) -> bool {
-        self.llm_provider == "claude_code"
+    /// Text model runs on-device (llama.cpp server started by the app).
+    pub fn local_llm(&self) -> bool {
+        self.llm_provider == "local"
     }
 
     /// Model id for cleanup/translation on the selected backend.
     pub fn text_model(&self) -> String {
-        if self.claude_code() { self.claude_model.clone() } else { self.llm_model.clone() }
+        if self.local_llm() { self.local_llm_model.clone() } else { self.llm_model.clone() }
     }
 
     /// Model id for Ask anything on the selected backend.
     pub fn ask_text_model(&self) -> String {
-        if self.claude_code() { self.claude_ask_model.clone() } else { self.ask_model.clone() }
+        if self.local_llm() { self.local_llm_model.clone() } else { self.ask_model.clone() }
     }
 
     pub fn one_step(&self) -> bool {

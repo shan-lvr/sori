@@ -20,10 +20,10 @@ jobs:
   test:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with: { node-version: 22, cache: npm, cache-dependency-path: desktop/package-lock.json }
       - run: cargo test -p sori-core
       - run: npm --prefix desktop ci && npx --prefix desktop tsc --noEmit -p desktop
@@ -32,12 +32,14 @@ jobs:
     needs: test
     runs-on: macos-14 # Apple Silicon
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with: { node-version: 22, cache: npm, cache-dependency-path: desktop/package-lock.json }
       - run: npm --prefix desktop ci
+      - name: Build llama-server sidecar (Metal)
+        run: ./scripts/build-llama-server.sh
       - name: Build app
         working-directory: desktop
         run: npx tauri build --bundles app --no-sign
@@ -48,17 +50,17 @@ jobs:
           VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")
           STAGE=$(mktemp -d); cp -R "$APP" "$STAGE/"; ln -s /Applications "$STAGE/Applications"
           mkdir -p dist; hdiutil create -quiet -volname Sori -srcfolder "$STAGE" -ov -format UDZO "dist/Sori-$VERSION-arm64.dmg"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with: { name: sori-macos, path: dist/*.dmg }
 
   windows:
     needs: test
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with: { node-version: 22, cache: npm, cache-dependency-path: desktop/package-lock.json }
       - name: Vulkan SDK (GPU Whisper)
         uses: jakoch/install-vulkan-sdk-action@v1
@@ -68,10 +70,13 @@ jobs:
           cache: true
           stripdown: true
       - run: npm --prefix desktop ci
+      - name: Build llama-server sidecar (Vulkan)
+        shell: bash
+        run: ./scripts/build-llama-server.sh
       - name: Build installer
         working-directory: desktop
         run: npx tauri build --bundles nsis
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with: { name: sori-windows, path: target/release/bundle/nsis/*.exe }
 
   release:
@@ -80,7 +85,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions: { contents: write }
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with: { path: artifacts, merge-multiple: true }
       - uses: softprops/action-gh-release@v2
         with:

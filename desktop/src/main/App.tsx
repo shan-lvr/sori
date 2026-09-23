@@ -7,7 +7,7 @@ import Home from "./Home";
 import History from "./History";
 import Dictionary from "./Dictionary";
 import SettingsModal from "./Settings";
-import { DownloadPill } from "./ModelDownload";
+import { DownloadPills } from "./ModelDownload";
 import { ToastProvider } from "./toast";
 
 type Page = "home" | "history" | "dictionary";
@@ -117,7 +117,13 @@ function Sidebar(props: { page: Page; setPage: (p: Page) => void; perms: PermSta
         </button>
       ))}
       <div className="spacer" />
-      <DownloadPill model={props.settings.local_model} enabled={props.settings.stt_engine === "local"} onOpen={() => props.openSettings("ai")} />
+      <DownloadPills
+        models={[
+          ...(props.settings.stt_engine === "local" ? [props.settings.local_model] : []),
+          ...(props.settings.llm_provider === "local" ? [props.settings.local_llm_model] : []),
+        ]}
+        onOpen={() => props.openSettings("ai")}
+      />
       <div className="status-pill">
         <span className={`dot ${ready ? "ok" : "bad"}`} />
         {ready ? t.hotkeysReady : t.hotkeysOff}

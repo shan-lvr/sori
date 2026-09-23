@@ -48,16 +48,18 @@ pub fn apply_settings(app: &Arc<App>, prev: Option<&Settings>) {
     }
     if prev.map_or(false, |p| p.stt_engine != s.stt_engine || p.local_model != s.local_model) {
         if s.stt_engine == "local" {
-            app.local_stt.clear_pause(&s.local_model);
+            app.models.clear_pause(&s.local_model);
         }
         app.sync_local_stt();
     }
     if prev.map_or(false, |p| p.interface_language != s.interface_language) {
         crate::refresh_tray(&app.handle);
     }
-    if prev.map_or(false, |p| p.llm_provider != s.llm_provider || p.claude_model != s.claude_model || p.claude_effort != s.claude_effort) {
-        app.claude.reset_workers();
-        app.warm_up();
+    if prev.map_or(false, |p| p.llm_provider != s.llm_provider || p.local_llm_model != s.local_llm_model) {
+        if s.local_llm() {
+            app.models.clear_pause(&s.local_llm_model);
+        }
+        app.sync_local_llm();
     }
 
     if prev.map_or(true, |p| p.launch_at_login != s.launch_at_login) {
@@ -297,8 +299,10 @@ pub fn import_dictionary(app: S, path: String) -> R<usize> {
 }
 
 #[tauri::command]
-pub fn local_models(app: S) -> Vec<crate::local_stt::ModelStatus> {
-    app.local_stt.status()
+pub fn local_models(app: S) -> Vec<crate::models::ModelStatus> {
+    let stt = app.local_stt.loaded_id();
+    let llm = app.llm_server.loaded_model();
+    app.models.status(|id| stt.as_deref() == Some(id) || llm.as_deref() == Some(id))
 }
 
 /// Start (or resume) a model download in the background; progress arrives as
@@ -309,19 +313,25 @@ pub fn download_local_model(app: S, id: String) {
 }
 
 #[tauri::command]
-pub fn pause_local_download(app: S) {
-    app.local_stt.pause_download();
+pub fn pause_local_download(app: S, id: String) {
+    app.models.pause(&id);
 }
 
 #[tauri::command]
 pub fn cancel_local_download(app: S, id: String) {
-    app.local_stt.cancel_download(&id);
+    app.models.cancel(&id);
     let _ = app.handle.emit("local-model-download", serde_json::json!({"id": id, "state": "cancelled"}));
 }
 
 #[tauri::command]
 pub fn delete_local_model(app: S, id: String) -> R<()> {
-    app.local_stt.delete(&id).map_err(e)
+    if app.local_stt.loaded_id().as_deref() == Some(id.as_str()) {
+        app.local_stt.unload();
+    }
+    if app.llm_server.loaded_model().as_deref() == Some(id.as_str()) {
+        app.llm_server.kill_now();
+    }
+    app.models.delete(&id).map_err(e)
 }
 
 #[tauri::command]
@@ -401,76 +411,3 @@ pub async fn process_text_preview(app: S<'_>, text: String, mode: String) -> R<S
     let p = pipeline::process_text(llm.as_ref(), &settings, &dict, &text, &mode, &ctx).await.map_err(e)?;
     Ok(p.output)
 }
-
-// ---------------------------------------------------------------- Claude Code CLI
-
-#[tauri::command]
-pub async fn claude_status(app: S<'_>) -> R<crate::claude_cli::CliStatus> {
-    Ok(app.claude.status().await)
-}
-
-/// Install the CLI with Anthropic's official installer; output streams as `claude-log`.
-#[tauri::command]
-pub async fn claude_install(app: S<'_>) -> R<crate::claude_cli::CliStatus> {
-    let h = app.handle.clone();
-    let _ = h.emit("claude-log", "$ curl -fsSL https://claude.ai/install.sh | bash");
-    app.claude
-        .install(move |line| {
-            let _ = h.emit("claude-log", line);
-        })
-        .await
-        .map_err(e)?;
-    Ok(app.claude.status().await)
-}
-
-/// `claude auth login`: opens the browser; finishes by itself once the user approves.
-/// Output streams as `claude-log`; the sign-in URL (fallback link) as `claude-login-url`.
-#[tauri::command]
-pub async fn claude_login(app: S<'_>) -> R<crate::claude_cli::CliStatus> {
-    let h = app.handle.clone();
-    let res = app
-        .claude
-        .login(move |line| {
-            if let Some(url) = crate::claude_cli::find_url(&line) {
-                let _ = h.emit("claude-login-url", url);
-            }
-            let _ = h.emit("claude-log", line);
-        })
-        .await;
-    app.claude.reset_workers();
-    let st = app.claude.status().await;
-    if st.logged_in {
-        app.warm_up();
-    }
-    match res {
-        Err(err) if !st.logged_in => Err(e(err)),
-        _ => Ok(st),
-    }
-}
-
-#[tauri::command]
-pub async fn claude_login_code(app: S<'_>, code: String) -> R<()> {
-    app.claude.submit_code(&code).await.map_err(e)
-}
-
-#[tauri::command]
-pub fn claude_login_cancel(app: S) {
-    app.claude.cancel_login();
-}
-
-/// One real cleanup through `claude -p` to confirm everything works and show the latency.
-#[tauri::command]
-pub async fn claude_test(app: S<'_>) -> R<String> {
-    let mut s = app.settings.read().clone();
-    s.llm_provider = "claude_code".into();
-    let t = std::time::Instant::now();
-    let llm = crate::claude_cli::ClaudeLlm { cli: app.claude.clone(), effort: s.claude_effort.clone() };
-    let p = pipeline::process_text(&llm, &s, &[], "um so let's uh meet tomorrow at three no wait four", &Mode::Dictate, &Context::default())
-        .await
-        .map_err(e)?;
-    if let Some(r) = p.fallback_reason {
-        return Err(r);
-    }
-    Ok(format!("{} · {:.1}s", p.output.trim(), t.elapsed().as_secs_f32()))
-}
-

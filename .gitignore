@@ -13,3 +13,6 @@ desktop/src-tauri/icon-src.png
 __pycache__/
 scripts/diag/diag
 scripts/diag/micstate
+
+# Built sidecars (scripts/build-llama-server.sh)
+desktop/src-tauri/binaries/

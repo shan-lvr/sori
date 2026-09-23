@@ -2,14 +2,15 @@
 # Build a shareable Sori for teammates → dist/Sori-<version>-arm64.dmg
 #
 # Differences from build-mac.sh (the owner's personal build):
-#   - No API keys baked in (SORI_TEAM_BUILD=1). Fresh installs default to on-device speech
-#     recognition + each person's own Claude Code sign-in, so nobody needs a key.
+#   - No API keys baked in (SORI_TEAM_BUILD=1). Fresh installs are fully on-device (Whisper
+#     speech recognition + a small local text model), so nobody needs a key.
 #   - Refuses to package if a key from .env.local somehow ended up in the binary.
 #   - Doesn't install anything locally.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"
 "$ROOT/scripts/signing-identity.sh"
+"$ROOT/scripts/build-llama-server.sh"
 cd "$ROOT/desktop"
 [ -d node_modules ] || npm install
 SORI_TEAM_BUILD=1 npx tauri build --bundles app --no-sign

@@ -1,5 +1,6 @@
 //! Compare cleanup styles / models on messy transcripts (text only, no audio).
 //! cargo run -p sori-core --example polish_eval -- model1 model2 …   (OPENROUTER_API_KEY from env)
+//! A model of the form `local:<name>@http://127.0.0.1:8080` uses a local llama-server.
 use sori_core::{pipeline, settings::Settings, Context, Mode};
 
 const CASES: &[(&str, &str, &str)] = &[
@@ -14,7 +15,7 @@ const CASES: &[(&str, &str, &str)] = &[
 async fn main() -> anyhow::Result<()> {
     let http = reqwest::Client::new();
     let mut base = Settings::default();
-    base.openrouter_api_key = std::env::var("OPENROUTER_API_KEY")?;
+    base.openrouter_api_key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
     let models: Vec<String> = std::env::args().skip(1).collect();
     for (app, bundle, raw) in CASES {
         let ctx = Context { app_name: app.to_string(), bundle_id: bundle.to_string(), field_focused: Some(true), ..Default::default() };
@@ -22,8 +23,13 @@ async fn main() -> anyhow::Result<()> {
         for m in &models {
             let mut s = base.clone();
             s.llm_model = m.clone();
-            let llm = sori_core::llm::OpenRouter { http: &http, api_key: &s.openrouter_api_key };
-            match pipeline::process_text(&llm, &s, &[], raw, &Mode::Dictate, &ctx).await {
+            if m.starts_with("local:") {
+                s.llm_provider = "local".into();
+            }
+            let or = sori_core::llm::OpenRouter { http: &http, api_key: &s.openrouter_api_key };
+            let local = m.strip_prefix("local:").and_then(|x| x.split_once('@')).map(|(_, url)| sori_core::llm::LocalServer { http: &http, base_url: url.to_string(), api_key: String::new() });
+            let llm: &dyn sori_core::llm::LlmCall = match &local { Some(l) => l, None => &or };
+            match pipeline::process_text(llm, &s, &[], raw, &Mode::Dictate, &ctx).await {
                 Ok(p) => println!("--- {m} ({}ms){}\n{}", p.llm_ms, p.fallback_reason.map(|r| format!(" [{r}]")).unwrap_or_default(), p.output),
                 Err(e) => println!("--- {m}: ERROR {e}"),
             }

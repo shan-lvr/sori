@@ -15,8 +15,9 @@ use sori_core::store::{HistoryEntry, Store};
 use sori_core::{audio, pipeline, text, AskAction, Context, Mode};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
 
-use crate::claude_cli::{ClaudeCli, ClaudeLlm};
+use crate::local_llm::{LlmServer, LocalLlm};
 use crate::local_stt::{self, LocalStt};
+use crate::models::ModelStore;
 use crate::platform::{self, Captured, HotkeyEvent};
 use crate::recorder::{Recorder, Recording};
 
@@ -69,8 +70,9 @@ pub struct App {
     pub settings: RwLock<Settings>,
     pub store: Mutex<Store>,
     pub recorder: Recorder,
+    pub models: Arc<ModelStore>,
     pub local_stt: Arc<LocalStt>,
-    pub claude: Arc<ClaudeCli>,
+    pub llm_server: Arc<LlmServer>,
     pub http: reqwest::Client,
     pub engine: Arc<Mutex<Engine>>,
     pub data_dir: PathBuf,
@@ -99,14 +101,8 @@ pub fn default_settings() -> Settings {
         s.shortcuts.translate = vec![c(&["ControlLeft", "MetaLeft", "ShiftLeft"])];
         s.shortcuts.ask = vec![c(&["ControlLeft", "MetaLeft", "Space"])];
     }
-    // Team build (no keys baked in): on-device speech recognition + the user's own Claude
-    // subscription through Claude Code, so nobody needs an API key.
-    if s.elevenlabs_api_key.is_empty() {
-        s.stt_engine = "local".into();
-    }
-    if s.openrouter_api_key.is_empty() {
-        s.llm_provider = "claude_code".into();
-    }
+    // Defaults are fully on-device (Whisper + a small local text model): no keys, nothing
+    // leaves the computer. Cloud engines are opt-in in Settings → AI.
     s
 }
 
@@ -157,13 +153,15 @@ impl App {
             .pool_idle_timeout(Duration::from_secs(300))
             .tcp_keepalive(Duration::from_secs(30))
             .build()?;
+        let models = Arc::new(ModelStore::new(data_dir.join("models")));
         let app = Arc::new(Self {
             handle,
             settings: RwLock::new(settings),
             store: Mutex::new(store),
             recorder: Recorder::spawn(),
-            local_stt: Arc::new(LocalStt::new(data_dir.join("models"))),
-            claude: Arc::new(ClaudeCli::new()),
+            local_stt: Arc::new(LocalStt::new(models.clone())),
+            llm_server: Arc::new(LlmServer::new(models.clone(), data_dir.join("llama-server.log"))),
+            models,
             http,
             engine,
             data_dir,
@@ -179,6 +177,7 @@ impl App {
         app.save_settings_file()?;
         app.recorder.prepare(app.settings.read().microphone.clone());
         app.sync_local_stt();
+        app.sync_local_llm();
         Ok(app)
     }
 
@@ -203,7 +202,7 @@ impl App {
         if s.stt_engine == "local" {
             // Selected but missing (first launch, or just switched in Settings): fetch it now,
             // resuming any partial download — unless the user paused/deleted it on purpose.
-            if self.local_stt.should_auto_download(&s.local_model) {
+            if self.models.should_auto_download(&s.local_model) {
                 self.start_model_download(&s.local_model);
             }
             if self.local_stt.is_installed(&s.local_model) {
@@ -219,6 +218,41 @@ impl App {
         }
     }
 
+    /// Same for the text model: download if needed, start llama-server and prime its prompt
+    /// cache in the background; stop it (freeing ~3 GB) when a cloud model is selected.
+    pub fn sync_local_llm(self: &Arc<Self>) {
+        let s = self.settings.read().clone();
+        if !s.local_llm() {
+            let srv = self.llm_server.clone();
+            tauri::async_runtime::spawn(async move { srv.stop().await });
+            return;
+        }
+        let id = s.local_llm_model.clone();
+        if self.models.should_auto_download(&id) {
+            self.start_model_download(&id);
+        }
+        if self.models.is_installed(&id) {
+            let app = self.clone();
+            tauri::async_runtime::spawn(async move {
+                let dict = app.store.lock().dictionary_terms().unwrap_or_default();
+                let (system, user) = sori_core::prompts::dictate_local(&s, &dict, "음 테스트");
+                let req = sori_core::llm::ChatRequest {
+                    model: id.clone(),
+                    system,
+                    user,
+                    max_tokens: 1,
+                    examples: sori_core::prompts::local_examples(),
+                    ..Default::default()
+                };
+                let t = Instant::now();
+                match app.llm_server.complete(&id, &req).await {
+                    Ok(_) => log::info!("local llm primed in {}ms", t.elapsed().as_millis()),
+                    Err(e) => log::error!("local llm start failed: {e:#}"),
+                }
+            });
+        }
+    }
+
     /// Download/resume a model in the background, then load it if it's the selected one.
     pub fn start_model_download(self: &Arc<Self>, id: &str) {
         let app = self.clone();
@@ -226,15 +260,16 @@ impl App {
         tauri::async_runtime::spawn(async move {
             let h = app.handle.clone();
             let res = app
-                .local_stt
+                .models
                 .download(&app.http, &id, move |d| {
                     let _ = h.emit("local-model-download", d);
                 })
                 .await;
             match res {
-                Ok(()) if app.local_stt.is_installed(&id) => {
+                Ok(()) if app.models.is_installed(&id) => {
                     log::info!("model {id} ready");
                     app.sync_local_stt();
+                    app.sync_local_llm();
                 }
                 Ok(()) => {}
                 Err(e) => log::error!("model download failed: {e:#}"),
@@ -274,21 +309,30 @@ impl App {
         Ok((r, ms, None))
     }
 
-    /// The text model selected in settings: OpenRouter API or the local Claude Code CLI.
+    /// The text model selected in settings: on-device llama.cpp or the OpenRouter API.
     pub fn llm<'a>(&'a self, s: &'a Settings) -> Box<dyn sori_core::llm::LlmCall + 'a> {
-        if s.claude_code() {
-            Box::new(ClaudeLlm { cli: self.claude.clone(), effort: s.claude_effort.clone() })
+        if s.local_llm() {
+            Box::new(LocalLlm { server: self.llm_server.clone(), model: s.local_llm_model.clone() })
         } else {
             Box::new(sori_core::llm::OpenRouter { http: &self.http, api_key: &s.openrouter_api_key })
         }
     }
 
-    /// Keep HTTP/TLS connections to both APIs warm so the first request after idle is fast,
-    /// and keep a Claude Code session running when it's the text model.
+    /// Keep HTTP/TLS connections to the cloud APIs warm so the first request after idle is
+    /// fast, and make sure the on-device text model is up when it's selected.
     pub fn warm_up(self: &Arc<Self>) {
         let s = self.settings.read().clone();
-        if s.claude_code() {
-            self.claude.warm(&s.claude_model, &s.claude_effort);
+        if s.local_llm() && self.models.is_installed(&s.local_llm_model) && self.llm_server.loaded_model().is_none() {
+            let srv = self.llm_server.clone();
+            let id = s.local_llm_model.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = srv.ensure_running(&id).await {
+                    log::warn!("local llm warm-up: {e:#}");
+                }
+            });
+        }
+        if s.stt_engine == "local" && !s.local_llm() && s.pipeline_mode != "one_step" && s.openrouter_api_key.is_empty() {
+            return;
         }
         let app = self.clone();
         tauri::async_runtime::spawn(async move {

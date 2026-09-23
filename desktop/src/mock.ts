@@ -11,10 +11,8 @@ const settings: Settings = {
   stt_language: "",
   llm_model: "google/gemini-3.8-flash",
   ask_model: "google/gemini-3.8-flash",
-  llm_provider: "claude_code",
-  claude_model: "haiku",
-  claude_ask_model: "haiku",
-  claude_effort: "low",
+  llm_provider: "local",
+  local_llm_model: "gemma-4-e2b",
   cleanup_style: "polished",
   pipeline_mode: "two_step",
   one_step_model: "google/gemini-3.8-flash",
@@ -146,60 +144,69 @@ const dictionary: DictWord[] = ["ElevenLabs", "OpenRouter", "Typeless", "GetLuck
   created_at: now - i * 1000,
 }));
 
-// Simulated model download: ~10s, one dropped connection at 40% to show automatic retry.
+// Simulated model downloads (~10 s each, one dropped connection at 40% to show automatic retry).
 type MockDl = { id: string; state: string; downloaded: number; total: number; bytes_per_sec: number; error: string | null; attempt: number };
-const model = {
-  id: "whisper-large-v3-turbo-q5_0",
-  label: "Whisper large-v3-turbo (q5, 574MB)",
-  size: 574041195,
-  installed: false,
-  loaded: false,
-  downloading: false,
-  partial: 0,
-  paused: false,
-  download: null as MockDl | null,
-  stop: "" as "" | "pause" | "cancel",
-  failed: false,
+type MockModel = {
+  id: string;
+  kind: "stt" | "llm";
+  label: string;
+  size: number;
+  license: string;
+  installed: boolean;
+  loaded: boolean;
+  downloading: boolean;
+  partial: number;
+  paused: boolean;
+  download: MockDl | null;
+  stop: "" | "pause" | "cancel";
+  failed: boolean;
 };
-const emitDl = (d: MockDl) => {
-  model.download = d;
+const mk = (id: string, kind: "stt" | "llm", label: string, size: number, license: string): MockModel => ({
+  id, kind, label, size, license, installed: false, loaded: false, downloading: false, partial: 0, paused: false, download: null, stop: "", failed: false,
+});
+const models: MockModel[] = [
+  mk("whisper-large-v3-turbo-q5_0", "stt", "Whisper large-v3-turbo (q5)", 574041195, "MIT"),
+  mk("gemma-4-e2b", "llm", "Gemma 4 E2B (Q4_K_M)", 3106738272, "Apache-2.0"),
+  mk("kanana-2-1.3b", "llm", "Kanana-2 1.3B (Q4_K_M)", 853655776, "Kanana Open License"),
+];
+const findModel = (id: unknown) => models.find((m) => m.id === id) ?? models[0];
+const emitDl = (m: MockModel, d: MockDl) => {
+  m.download = d;
   window.dispatchEvent(new CustomEvent("mock:local-model-download", { detail: { ...d } }));
 };
-async function mockDownload() {
+async function mockDownload(model: MockModel) {
   if (model.downloading) return;
   Object.assign(model, { downloading: true, paused: false, stop: "" });
   const base = { id: model.id, total: model.size, bytes_per_sec: 0, error: null, attempt: 0 };
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-  emitDl({ ...base, state: "connecting", downloaded: model.partial });
+  emitDl(model, { ...base, state: "connecting", downloaded: model.partial });
   await sleep(600);
   while (model.partial < model.size) {
     if (model.stop) break;
     if (!model.failed && model.partial > model.size * 0.4) {
       model.failed = true;
-      emitDl({ ...base, state: "retrying", downloaded: model.partial, attempt: 1, error: "Connection interrupted" });
+      emitDl(model, { ...base, state: "retrying", downloaded: model.partial, attempt: 1, error: "Connection interrupted" });
       await sleep(1500);
     }
-    model.partial = Math.min(model.size, model.partial + 14_000_000);
-    emitDl({ ...base, state: "downloading", downloaded: model.partial, bytes_per_sec: 56_000_000 });
+    model.partial = Math.min(model.size, model.partial + model.size / 40);
+    emitDl(model, { ...base, state: "downloading", downloaded: model.partial, bytes_per_sec: 56_000_000 });
     await sleep(250);
   }
   model.downloading = false;
   if (model.stop === "pause") {
     model.paused = true;
-    emitDl({ ...base, state: "paused", downloaded: model.partial });
+    emitDl(model, { ...base, state: "paused", downloaded: model.partial });
   } else if (model.stop === "cancel") {
     Object.assign(model, { partial: 0, download: null });
     window.dispatchEvent(new CustomEvent("mock:local-model-download", { detail: { ...base, state: "cancelled", downloaded: 0 } }));
   } else {
-    emitDl({ ...base, state: "verifying", downloaded: model.size });
+    emitDl(model, { ...base, state: "verifying", downloaded: model.size });
     await sleep(1200);
     Object.assign(model, { installed: true, loaded: true, partial: 0 });
-    emitDl({ ...base, state: "done", downloaded: model.size });
+    emitDl(model, { ...base, state: "done", downloaded: model.size });
   }
   model.stop = "";
 }
-
-const claude = { installed: false, path: null as string | null, version: null as string | null, logged_in: false, auth_method: "none", installing: false, logging_in: false };
 
 export async function mockInvoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
   switch (cmd) {
@@ -245,34 +252,22 @@ export async function mockInvoke(cmd: string, args?: Record<string, unknown>): P
     case "list_microphones":
       return ["MacBook Pro Microphone", "AirPods Pro"];
     case "local_models":
-      return [{ ...model, download: model.download ? { ...model.download } : null }];
+      return models.map(({ stop: _s, failed: _f, ...m }) => ({ ...m, download: m.download ? { ...m.download } : null }));
     case "download_local_model":
-      mockDownload();
+      mockDownload(findModel(args?.id));
       return null;
     case "pause_local_download":
-      model.stop = "pause";
+      findModel(args?.id).stop = "pause";
       return null;
-    case "cancel_local_download":
-      if (model.downloading) model.stop = "cancel";
-      else Object.assign(model, { partial: 0, paused: false, download: null });
+    case "cancel_local_download": {
+      const m = findModel(args?.id);
+      if (m.downloading) m.stop = "cancel";
+      else Object.assign(m, { partial: 0, paused: false, download: null });
       return null;
+    }
     case "delete_local_model":
-      Object.assign(model, { installed: false, loaded: false, paused: true, download: null });
+      Object.assign(findModel(args?.id), { installed: false, loaded: false, paused: true, download: null });
       return null;
-    case "claude_status":
-      return { ...claude };
-    case "claude_install":
-      await new Promise((r) => setTimeout(r, 1500));
-      claude.installed = true;
-      claude.version = "2.1.280";
-      return { ...claude };
-    case "claude_login":
-      await new Promise((r) => setTimeout(r, 2500));
-      claude.logged_in = true;
-      claude.auth_method = "claude.ai";
-      return { ...claude };
-    case "claude_test":
-      return "Let's meet tomorrow at 4. · 0.9s";
     case "app_info":
       return { version: "0.1.0", data_dir: "~/Library/Application Support/com.seyoon.sori", config_path: "…/settings.json", has_default_keys: true, platform: "macos", default_shortcuts: { dictate: [["Fn"]], translate: [["Fn", "ShiftLeft"]], ask: [["Fn", "Space"]] } };
     default:

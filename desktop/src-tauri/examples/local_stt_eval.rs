@@ -2,6 +2,7 @@
 //! cargo run --release -p sori --example local_stt_eval -- <models_dir> <data_dir>
 use sori_core::settings::Settings;
 use sori_lib::local_stt::{build_prompt, build_prompt_lang, LocalStt};
+use sori_lib::models::ModelStore;
 
 fn norm(s: &str) -> Vec<char> {
     s.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect()
@@ -28,7 +29,7 @@ fn read(path: &str) -> Vec<f32> {
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let (models, data) = (&args[1], &args[2]);
-    let stt = LocalStt::new(models.into());
+    let stt = LocalStt::new(std::sync::Arc::new(ModelStore::new(models.into())));
     let id = "whisper-large-v3-turbo-q5_0";
     let t = std::time::Instant::now();
     stt.ensure_loaded(id)?;

@@ -2,7 +2,6 @@ import { DEVICE, isWin } from "../bridge";
 import { useEffect, useMemo, useState } from "react";
 import { api, comboLabel, keyLabel, PermState, Settings, Shortcut, sortKeys, Stats } from "../api";
 import { useL, useLang, useT } from "../i18n";
-import ClaudeSetup, { useClaudeStatus } from "./ClaudeSetup";
 import { targetLabel } from "./Settings";
 import { LocalModelControl, useLocalModel } from "./ModelDownload";
 import { useToast } from "./toast";
@@ -212,16 +211,16 @@ function Setup(props: { settings: Settings; perms: PermState | null; save: (s: S
   const { perms, settings } = props;
   const L = useL();
   const toast = useToast();
-  const [claude] = useClaudeStatus();
   const [model] = useLocalModel(settings.stt_engine === "local" ? settings.local_model : undefined);
+  const [textModel] = useLocalModel(settings.llm_provider === "local" ? settings.local_llm_model : undefined);
   const [running, setRunning] = useState(false);
   if (!perms) return null;
 
   const micOk = perms.microphone === "granted";
   const local = settings.stt_engine === "local";
   const sttOk = local ? !!model?.installed : !!settings.elevenlabs_api_key.trim();
-  const usesClaude = settings.llm_provider === "claude_code";
-  const textOk = usesClaude ? !!claude?.installed && !!claude?.logged_in : !!settings.openrouter_api_key.trim();
+  const localText = settings.llm_provider === "local";
+  const textOk = localText ? !!textModel?.installed : !!settings.openrouter_api_key.trim();
   const allOk = perms.accessibility && perms.hotkeys_ready && micOk && sttOk && textOk;
   if (allOk && !settings.onboarding_done) props.save({ ...settings, onboarding_done: true });
 
@@ -238,9 +237,7 @@ function Setup(props: { settings: Settings; perms: PermState | null; save: (s: S
     await api.requestAccessibility();
     await api.openPrivacyPane("accessibility");
   };
-  const kick = () => window.dispatchEvent(new Event("claude-refresh"));
-
-  /** Everything that needs no typing, in one go: permission prompts, model download, CLI install, sign-in. */
+  /** Everything that needs no typing, in one go: permission prompts and both model downloads. */
   const setupAll = async () => {
     setRunning(true);
     try {
@@ -250,24 +247,8 @@ function Setup(props: { settings: Settings; perms: PermState | null; save: (s: S
       if (local && model && !model.installed && !model.downloading) {
         jobs.push(api.downloadLocalModel(model.id).catch((e) => toast(String(e), { tone: "error" })));
       }
-      if (usesClaude && claude) {
-        jobs.push(
-          (async () => {
-            let st = claude;
-            if (!st.installed && !st.installing) {
-              setTimeout(kick, 300);
-              st = await api.claudeInstall();
-            }
-            if (st.installed && !st.logged_in && !st.logging_in) {
-              setTimeout(kick, 300);
-              await api.claudeLogin();
-            }
-            kick();
-          })().catch((e) => {
-            kick();
-            toast(String(e), { tone: "error", ms: 6000 });
-          }),
-        );
+      if (localText && textModel && !textModel.installed && !textModel.downloading) {
+        jobs.push(api.downloadLocalModel(textModel.id).catch((e) => toast(String(e), { tone: "error" })));
       }
       await Promise.all(jobs);
       props.refreshPerms();
@@ -305,12 +286,12 @@ function Setup(props: { settings: Settings; perms: PermState | null; save: (s: S
             <p className="hint" style={{ margin: "2px 0 8px" }}>
               {isWin
                 ? L(
-                    "One click runs every step below. A browser tab opens to sign in to Claude.",
-                    "버튼 하나로 아래 단계를 모두 진행해요. Claude 로그인을 위해 브라우저 탭이 열려요.",
+                    "One click runs every step below: it allows the microphone and downloads the on-device models (resumable — you can keep working).",
+                    "버튼 하나로 아래 단계를 모두 진행해요: 마이크를 허용하고 로컬 모델을 내려받아요 (이어받기 지원 — 다른 작업을 해도 돼요).",
                   )
                 : L(
-                    "One click runs every step below. macOS will ask you to allow Microphone and Accessibility, and a browser tab opens to sign in to Claude.",
-                    "버튼 하나로 아래 단계를 모두 진행해요. macOS가 마이크·손쉬운 사용 허용을 묻고, Claude 로그인을 위해 브라우저 탭이 열려요.",
+                    "One click runs every step below. macOS asks you to allow Microphone and Accessibility, then the on-device models download in the background (resumable).",
+                    "버튼 하나로 아래 단계를 모두 진행해요. macOS가 마이크·손쉬운 사용 허용을 묻고, 로컬 모델은 백그라운드에서 내려받아요 (이어받기 지원).",
                   )}
             </p>
             <div className="checklist">
@@ -372,13 +353,16 @@ function Setup(props: { settings: Settings; perms: PermState | null; save: (s: S
               <div className={`check ${textOk ? "done" : ""}`}>
                 <span className="mark">{step(textOk)}</span>
                 <div className="grow">
-                  {usesClaude ? (
+                  {localText ? (
                     <>
-                      <b>Claude Code</b>
-                      {L(" — cleans up your text using your Claude subscription. Install the CLI, then sign in.", " — 내 Claude 구독으로 텍스트를 다듬어요. CLI를 설치하고 로그인하세요.")}
+                      <b>{L("On-device text model", "로컬 텍스트 모델")}</b>
+                      {L(
+                        ` — cleans up what you said, on this ${DEVICE}. One-time download.`,
+                        ` — 말한 내용을 이 ${DEVICE}에서 다듬어요. 한 번만 내려받으면 돼요.`,
+                      )}
                       {!textOk && (
                         <div style={{ marginTop: 6 }}>
-                          <ClaudeSetup compact />
+                          <LocalModelControl model={settings.local_llm_model} language={settings.stt_language} compact />
                         </div>
                       )}
                     </>
@@ -389,7 +373,7 @@ function Setup(props: { settings: Settings; perms: PermState | null; save: (s: S
                     </>
                   )}
                 </div>
-                {!usesClaude && !textOk && (
+                {!localText && !textOk && (
                   <button className="btn small" onClick={() => props.openSettings("ai")}>
                     {L("Settings", "설정")}
                   </button>

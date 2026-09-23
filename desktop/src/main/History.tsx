@@ -165,10 +165,10 @@ export default function History({ settings, save, tick }: { settings: Settings; 
     settings.stt_engine === "local"
       ? L(`Speech is transcribed on this ${DEVICE}.`, `음성 인식은 이 ${DEVICE}에서 처리됩니다.`)
       : L("Audio is sent to ElevenLabs for transcription.", "음성은 ElevenLabs로 전송되어 인식됩니다."),
-    settings.llm_provider === "claude_code"
+    settings.llm_provider === "local"
       ? L(
-          "Cleanup runs through Claude Code (your Claude subscription).",
-          "텍스트 다듬기는 Claude Code(내 Claude 구독)를 통해 처리됩니다.",
+          `Cleanup also runs on this ${DEVICE} — nothing is sent anywhere.`,
+          `텍스트 다듬기도 이 ${DEVICE}에서 처리되어 어디로도 전송되지 않습니다.`,
         )
       : L("Text is sent to OpenRouter for cleanup.", "텍스트는 OpenRouter로 전송되어 다듬어집니다."),
     L("History and recordings stay only on this device.", "기록·오디오 파일은 로컬에만 남습니다."),

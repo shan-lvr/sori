@@ -34,8 +34,8 @@ const VK_MASK: u16 = 0xE8;
 struct HookCtx {
     engine: Arc<Mutex<Engine>>,
     tx: std::sync::mpsc::Sender<HotkeyEvent>,
-    /// A Win key took part in a shortcut during the current press.
-    win_used: AtomicBool,
+    /// A Win key is physically down.
+    win_held: AtomicBool,
 }
 
 static CTX: OnceLock<HookCtx> = OnceLock::new();
@@ -93,12 +93,14 @@ fn key_name(vk: u32) -> String {
     n.to_string()
 }
 
-fn feed(ctx: &HookCtx, key: &str, down: bool) -> bool {
+/// Feed one key transition to the engine. Returns (swallow, any shortcut output emitted).
+fn feed(ctx: &HookCtx, key: &str, down: bool) -> (bool, bool) {
     let (decision, recorded) = {
         let mut eng = ctx.engine.lock();
         let d = eng.on_key(key, down, Instant::now());
         (d, eng.take_recorded())
     };
+    let emitted = !decision.outputs.is_empty();
     for o in decision.outputs {
         let ev = match o {
             Output::Start(a) => HotkeyEvent::Start(a),
@@ -112,7 +114,7 @@ fn feed(ctx: &HookCtx, key: &str, down: bool) -> bool {
     if let Some(combo) = recorded {
         let _ = ctx.tx.send(HotkeyEvent::Recorded(combo));
     }
-    decision.swallow
+    (decision.swallow, emitted)
 }
 
 unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -127,14 +129,13 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
     }
     let down = matches!(wparam as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
     let key = key_name(kb.vkCode);
-    let is_win = kb.vkCode == 0x5B || kb.vkCode == 0x5C;
-    let uses_win = is_win && ctx.engine.lock().uses_key(&key);
-    let swallow = feed(ctx, &key, down);
-    if uses_win && down {
-        ctx.win_used.store(true, Ordering::Relaxed);
+    if kb.vkCode == 0x5B || kb.vkCode == 0x5C {
+        ctx.win_held.store(down, Ordering::Relaxed);
     }
-    if is_win && !down && ctx.win_used.swap(false, Ordering::Relaxed) {
-        // Keep the Start menu closed after a Ctrl+Win shortcut.
+    let (swallow, emitted) = feed(ctx, &key, down);
+    if emitted && ctx.win_held.load(Ordering::Relaxed) {
+        // A Ctrl+Win shortcut fired while Win is down: an intervening key event stops Windows
+        // from opening the Start menu when Win is released. A lone Win tap is untouched.
         send_keys(&[(VK_MASK, true), (VK_MASK, false)]);
     }
     if swallow {
@@ -159,14 +160,14 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
         }
         _ => return CallNextHookEx(hook, code, wparam, lparam),
     };
-    if feed(ctx, key, down) {
+    if feed(ctx, key, down).0 {
         return 1;
     }
     CallNextHookEx(hook, code, wparam, lparam)
 }
 
 pub fn start_hotkeys(engine: Arc<Mutex<Engine>>, tx: std::sync::mpsc::Sender<HotkeyEvent>) {
-    let _ = CTX.set(HookCtx { engine, tx: tx.clone(), win_used: AtomicBool::new(false) });
+    let _ = CTX.set(HookCtx { engine, tx: tx.clone(), win_held: AtomicBool::new(false) });
     std::thread::Builder::new()
         .name("sori-hooks".into())
         .spawn(move || unsafe {

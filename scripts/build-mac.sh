@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"
 "$ROOT/scripts/signing-identity.sh"
+"$ROOT/scripts/build-llama-server.sh"
 cd "$ROOT/desktop"
 [ -d node_modules ] || npm install
 npx tauri build --bundles app --no-sign
