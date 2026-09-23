@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Sori는 말한 내용을 텍스트로 받아쓰기 위해 마이크를 사용합니다.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Sori는 받아쓰는 동안 시스템 오디오를 음소거하기 위해 사용합니다.</string>
+</dict>
+</plist>

@@ -1,0 +1,15 @@
+.env.local
+*.env
+node_modules/
+dist/
+target/
+.DS_Store
+desktop/src-tauri/gen/
+desktop/src-tauri/icon-src.png
+.scratch/
+
+# Local tooling
+.claude/
+__pycache__/
+scripts/diag/diag
+scripts/diag/micstate
