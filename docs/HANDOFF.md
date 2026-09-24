@@ -32,6 +32,7 @@ Sori is a voice-dictation app: press a shortcut in any text field, speak, and a 
 - On-device text model: llama.cpp `llama-server` sidecar + **Gemma 4 E2B** (3.1 GB, default) or Kanana-2 1.3B (0.85 GB). 0.4–1.8 s per dictation on M4 Pro GPU.
 - Model downloader: per-model state, parallel downloads, HTTP Range resume (also after quitting), automatic retries with backoff, disk-space check, SHA-256 verification, pinned Hugging Face revisions, pause/resume/cancel/delete, progress in sidebar + Home + Settings.
 - **Admin mode** (owner only, `desktop/src-tauri/src/admin.rs`): cloud engines — ElevenLabs Scribe v2 (speech), OpenRouter (text; default `google/gemini-3.8-flash`) — API keys and cloud model choice require unlocking with the owner's password. Locked ⇒ the backend forces Local AI and clears keys (`admin::enforce_policy`, applied on load, save and lock). Builds bake a salted PBKDF2-SHA256 verifier (600k rounds) from `SORI_ADMIN_PASSWORD` (`.env.local` or CI secret); personal builds also bake the owner's keys AES-256-GCM-encrypted under the password-derived key (`build.rs`, `src/admin_crypto.rs`) — no plaintext keys in any binary. Unlock state persists per device in `admin.key` until Lock. Check: `SORI_ADMIN_PASSWORD=… cargo run -p sori --example admin_check -- <password>`.
+- **Ask anything is disabled on Local AI** (a small local model can't answer or look things up): shown greyed out with "API mode only — admin"; `Settings::ask_available()`; the controller refuses to start an Ask session (HUD notice) and ignores a mid-recording switch to Ask; `pipeline::process_text` also refuses.
 - UI names local models simply: "Local AI — Whisper (574 MB)", "Gemma (3.1 GB)", "Kanana (0.85 GB)" — no version/quantization details (owner's request).
 - Developer mode: ~200 dev terms as recognition hints, tech-term restoration in cleanup, per-app tone.
 - Prompts tuned for the main use case (coding-agent prompts) — see §4.
@@ -110,7 +111,7 @@ Test in: Notepad, VS Code (editor + Copilot/agent chat), Cursor, Windows Termina
 **On-device text model quality** (Gemma 4 E2B, 2B-class)
 - Reliable: keeps language and 반말/존댓말, keeps every request/constraint/hedge, removes fillers, fixes most tech terms, formats lists.
 - Weaker than cloud Gemini at deep restating: long, meta-level requests are only lightly reorganized; some misheard words survive (e.g. "폴리시" → "Politeness", "스트릭 모드" not always → Strict Mode). Owners who want the strongest polish can switch Settings → AI → Text AI to OpenRouter.
-- Ask with the local model works (replace/answer), but long answers take ~10 s.
+- Ask anything is intentionally disabled with the local model (see §1); it works in API mode (admin).
 
 **Everything else**
 - macOS: not notarized (Gatekeeper "Open Anyway" on first launch); Intel Macs not built.
