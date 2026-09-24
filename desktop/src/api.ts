@@ -16,7 +16,7 @@ export interface Settings {
   ask_model: string;
   llm_provider: "local" | "openrouter";
   local_llm_model: string;
-  cleanup_style: "polished" | "faithful";
+  cleanup_style: "minimal" | "light" | "clean" | "polished" | "agent";
   pipeline_mode: "two_step" | "one_step";
   one_step_model: string;
   shortcuts: { dictate: Shortcut[]; translate: Shortcut[]; ask: Shortcut[] };

@@ -102,7 +102,11 @@ export function noteText(L: L, code: string): string {
         ? L("AI cleanup failed — inserted the raw transcript", "AI 다듬기에 실패해 원문을 그대로 넣었어요")
         : key === "local_stt_failed"
           ? L("On-device recognition failed — used ElevenLabs instead", "로컬 음성 인식을 쓸 수 없어 ElevenLabs로 처리했어요")
-          : null;
+          : key === "cleanup_simplified"
+            ? L("Cleaned up at a gentler level so nothing was lost", "내용이 빠지지 않도록 한 단계 가볍게 다듬었어요")
+            : key === "cleanup_dropped"
+              ? L("Cleanup would have dropped part of what you said — inserted it as spoken", "다듬다가 내용이 빠질 것 같아 말한 그대로 넣었어요")
+              : null;
   if (base === null) return code;
   return detail ? `${base} (${detail})` : base;
 }

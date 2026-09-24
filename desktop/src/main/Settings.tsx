@@ -66,6 +66,15 @@ const localLlms = (L: L): [string, string][] => [
   ["gemma-4-e2b", L("Gemma — recommended (3.1 GB)", "Gemma — 추천 (3.1 GB)")],
   ["kanana-2-1.3b", L("Kanana — fastest (0.85 GB)", "Kanana — 가장 빠름 (0.85 GB)")],
 ];
+/** Cleanup levels 1–5 (ids match sori-core `prompts::cleanup_level`). */
+const cleanupLevels = (L: L): [Settings["cleanup_style"], string, string][] => [
+  ["minimal", L("Minimal", "최소"), L("Fillers and recognition errors only — your exact words", "군더더기·인식 오류만 — 말한 그대로")],
+  ["light", L("Light", "가볍게"), L("Also stutters, repeats, self-corrections — your phrasing", "더듬기·반복·말 바꾸기까지 — 표현은 그대로")],
+  ["clean", L("Clean", "깔끔하게"), L("Natural written sentences, same order", "자연스러운 문장으로, 순서는 그대로")],
+  ["polished", L("Polished", "정돈"), L("Clear and concise; lists for several points (recommended)", "명확하고 간결하게, 여러 요점은 목록으로 (추천)")],
+  ["agent", L("Agent", "에이전트"), L("A structured prompt for coding agents: goal → tasks → constraints", "코딩 에이전트용 프롬프트 구조: 목표 → 할 일 → 제약")],
+];
+
 const sttLangs = (L: L): [string, string][] => [
   ["", L("Auto-detect (best for mixed Korean/English)", "자동 감지 (한/영 섞어 말하기 추천)")],
   ["ko", L("Korean", "한국어")],
@@ -713,20 +722,22 @@ function AiKeys({ settings: s, save }: Props) {
           </>
         )}
         <Row
-          title={L("Cleanup style", "다듬기 스타일")}
-          desc={
-            s.cleanup_style === "faithful"
-              ? L("Keeps your wording; only removes fillers, stutters and false starts.", "말한 표현을 그대로 두고 군더더기·더듬기·말 바꾸기만 정리해요.")
-              : L(
-                  "Figures out what you meant and writes it clean and concise: drops fillers and rambling, merges repeats, turns multiple points into a list — without losing anything you said.",
-                  "말하려는 의도를 파악해 깔끔하고 간결하게 정리해요. 군더더기와 반복은 빼고, 여러 요점은 목록으로 — 말한 내용은 빠뜨리지 않아요.",
-                )
-          }
+          title={L("Cleanup level", "다듬기 단계")}
+          desc={L(
+            "How much Sori rewrites what you said. If a rewrite would drop anything, Sori automatically uses a gentler level (noted in History).",
+            "말한 내용을 얼마나 고쳐 쓸지 정해요. 다듬다가 내용이 빠질 것 같으면 자동으로 한 단계 가볍게 처리해요 (기록에 표시).",
+          )}
+          wide
         >
-          <select className="select" value={s.cleanup_style} onChange={(e) => save({ ...s, cleanup_style: e.target.value as Settings["cleanup_style"] })}>
-            <option value="polished">{L("Polished — sharp and concise (recommended)", "정돈 — 요점만 깔끔하게 (추천)")}</option>
-            <option value="faithful">{L("Faithful — light touch", "원문 유지 — 가볍게만")}</option>
-          </select>
+          <div className="levels">
+            {cleanupLevels(L).map(([v, name], i) => (
+              <button key={v} className={`level ${s.cleanup_style === v ? "active" : ""}`} onClick={() => save({ ...s, cleanup_style: v })}>
+                <span className="level-n">{i + 1}</span>
+                <span className="level-name">{name}</span>
+              </button>
+            ))}
+          </div>
+          <span className="hint">{cleanupLevels(L).find(([v]) => v === s.cleanup_style)?.[2]}</span>
         </Row>
       </div>
       {admin?.available && (

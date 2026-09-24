@@ -128,7 +128,10 @@ Test in: Notepad, VS Code (editor + Copilot/agent chat), Cursor, Windows Termina
 Code: `crates/sori-core/src/prompts.rs`, `pipeline.rs`.
 
 - **Purpose is stated explicitly.** Both prompt families say the speaker is a developer who mostly dictates prompts for AI coding agents; unclear words are read in that light. Per-app styles (`AppCategory::style`) turn Code/AI destinations into "a clear instruction the agent can act on: situation → request → constraints; numbered list for multiple requests".
-- **Cloud models** (OpenRouter) get the long `POLISH_SYSTEM` (default "Polished" style) or `DICTATE_SYSTEM` ("Faithful"), plus the developer block, per-app style, dictionary and the user's own style notes.
+- **Five cleanup levels** (`Settings.cleanup_style`: `minimal`, `light`, `clean`, `polished` (default), `agent`; `prompts::cleanup_level`). Each level has its own contract in `CLOUD_LEVELS` / `LOCAL_LEVELS` and its own worked-example outputs (`LOCAL_EXAMPLES`, same inputs, five outputs). "Agent" writes a structured coding-agent prompt (goal → context → numbered tasks → constraints/questions); for chat/email destinations it writes a well-organized message instead.
+- **Drop guard** (`pipeline::dictate_text`): every rewrite is checked with `text::coverage_detail` (share of the transcript's content words still present; Hangul matched by stem, Latin tech terms that replaced Hangul spellings get credit) and `text::lost_question` (a question must stay a question). Thresholds: L1 0.8, L2 0.7, L3 0.6, L4–5 0.5. On failure it retries at a gentler level (5/4 → 3 → 2) and finally inserts the transcript as spoken (`cleanup_simplified` / `cleanup_dropped` notes in History).
+- **Long transcripts on the local model** (> 260 chars) are cleaned chunk by chunk at level ≤ 3 (`text::chunk_sentences`), then restructured as a whole for levels 4–5 — a 2B model otherwise summarizes and drops the tail (seen in real use: a 490-char dictation lost 4 of 6 requests).
+- **Cloud models** (OpenRouter) get `CLOUD_HEAD` (hard rules: same language/speech level, nothing lost, questions stay questions, nothing added) + the level contract + developer block, per-app style, dictionary and the user's style notes.
 - **Small local models** get `LOCAL_DICTATE_SYSTEM` (short) + 5 worked examples as prior chat turns (`local_examples`). Each input carries a tag computed in code, e.g. `[Write in Korean, casual 반말 endings like ~해/~줘/~야 — no ~요 · a prompt for a coding agent]`:
   - language from the Hangul/Latin ratio (`language_hint`) — without it the model translated English input into Korean;
   - speech level from sentence endings (`korean_register`: -요, -ㅂ니다/-ㅂ니까; careful: 그러니까 / 아니다 are not polite) — without it the model drifted into 존댓말;
@@ -143,7 +146,7 @@ Code: `crates/sori-core/src/prompts.rs`, `pipeline.rs`.
 cargo run -p sori-core --example polish_eval -- google/gemini-3.8-flash local:gemma@http://127.0.0.1:8080
 CASE=3 cargo run -p sori-core --example polish_eval -- …   # one case
 ```
-The cases in `crates/sori-core/examples/polish_eval.rs` are mostly real coding-agent dictation plus a chat and an email case. Check: language, 반말/존댓말, every constraint ("don't commit", "바로 고치지 말고") and hedge ("maybe", "아마") survives, nothing invented, tech terms fixed.
+`STYLE=minimal|light|clean|polished|agent` picks the level; `EVAL_FILE=cases.json` adds private cases (keep real dictations out of git — e.g. `.scratch/`, which is ignored). Output shows coverage and any fallback note per case. The cases in `crates/sori-core/examples/polish_eval.rs` are mostly realistic coding-agent dictation plus a chat and an email case. Check: language, 반말/존댓말, every constraint ("don't commit", "바로 고치지 말고") and hedge ("maybe", "아마") survives, nothing invented, tech terms fixed.
 
 ---
 

@@ -123,6 +123,8 @@ pub fn note_text(s: &Settings, code: &str) -> String {
         "assistant_reply" => tr(s, "The AI answered instead of cleaning up — inserted your words as spoken", "AI가 정리 대신 답변을 해서 원문을 그대로 넣었어요"),
         "llm_failed" => tr(s, "AI cleanup failed — inserted the raw transcript", "AI 다듬기에 실패해 원문을 그대로 넣었어요"),
         "local_stt_failed" => tr(s, "On-device recognition failed — used ElevenLabs instead", "로컬 음성 인식을 쓸 수 없어 ElevenLabs로 처리했어요"),
+        "cleanup_simplified" => tr(s, "Cleaned up at a gentler level so nothing was lost", "내용이 빠지지 않도록 한 단계 가볍게 다듬었어요"),
+        "cleanup_dropped" => tr(s, "Cleanup would have dropped part of what you said — inserted it as spoken", "다듬다가 내용이 빠질 것 같아 말한 그대로 넣었어요"),
         _ => return code.to_string(),
     };
     if detail.is_empty() {
@@ -147,6 +149,9 @@ impl App {
         std::fs::create_dir_all(data_dir.join("audio"))?;
         let admin = Admin::new(config_path.with_file_name("admin.key"));
         let mut settings = load_settings(&config_path);
+        if settings.cleanup_style == "faithful" {
+            settings.cleanup_style = "light".into(); // renamed when cleanup got five levels
+        }
         // Cloud engines + API keys are owner-only: without admin mode, everything is on-device.
         if admin.is_unlocked() {
             admin.fill_default_keys(&mut settings);
@@ -242,15 +247,9 @@ impl App {
             let app = self.clone();
             tauri::async_runtime::spawn(async move {
                 let dict = app.store.lock().dictionary_terms().unwrap_or_default();
-                let (system, user) = sori_core::prompts::dictate_local(&s, &sori_core::Context::default(), &dict, "음 테스트");
-                let req = sori_core::llm::ChatRequest {
-                    model: id.clone(),
-                    system,
-                    user,
-                    max_tokens: 1,
-                    examples: sori_core::prompts::local_examples(),
-                    ..Default::default()
-                };
+                let level = sori_core::prompts::cleanup_level(&s);
+                let (system, user, examples) = sori_core::prompts::dictate_local(&s, &sori_core::Context::default(), &dict, "음 테스트", level);
+                let req = sori_core::llm::ChatRequest { model: id.clone(), system, user, max_tokens: 1, examples, ..Default::default() };
                 let t = Instant::now();
                 match app.llm_server.complete(&id, &req).await {
                     Ok(_) => log::info!("local llm primed in {}ms", t.elapsed().as_millis()),
@@ -737,7 +736,7 @@ impl App {
             match platform::paste_text(text, cap.pid, keep) {
                 Ok(()) => {
                     self.hide_hud();
-                    if let Some(reason) = &o.fallback_reason {
+                    if let Some(reason) = o.fallback_reason.as_ref().filter(|r| r.as_str() != "cleanup_simplified") {
                         self.show_message(&short(&note_text(&s, reason), 110), "info", 3000);
                     }
                     "insert".into()

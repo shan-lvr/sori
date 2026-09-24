@@ -88,6 +88,108 @@ pub async fn transcribe(
     Ok((r, t.elapsed().as_millis() as u64))
 }
 
+/// Transcripts longer than this are cleaned chunk by chunk on the on-device model.
+const LOCAL_CHUNK_OVER: usize = 260;
+const LOCAL_CHUNK_SIZE: usize = 220;
+
+/// One cleanup call at `level` (1–5).
+async fn clean_once(llm: &dyn LlmCall, s: &Settings, dictionary: &[String], text: &str, ctx: &Context, level: u8) -> Result<String> {
+    let local = s.local_llm();
+    let (system, user, examples) = if local {
+        prompts::dictate_local(s, ctx, dictionary, text, level)
+    } else {
+        let (system, user) = prompts::dictate(s, ctx, dictionary, text, level);
+        (system, user, vec![])
+    };
+    let req = ChatRequest {
+        model: s.text_model(),
+        system,
+        user,
+        temperature: if local { 0.1 } else { 0.2 },
+        max_tokens: if local { 1536 } else { 4096 },
+        reasoning: Some(json!({"effort": "minimal", "exclude": true})),
+        json_mode: false,
+        web: false,
+        examples,
+    };
+    Ok(text::clean_llm_output(&llm.complete(&req).await?))
+}
+
+/// Did the rewrite keep the substance? Content coverage (stricter for lighter levels), no
+/// question turned into a request, no "answer" instead of a rewrite.
+fn kept_substance(source: &str, out: &str, level: u8) -> bool {
+    if out.trim().is_empty() || text::looks_like_assistant_reply(source, out) || text::lost_question(source, out) {
+        return false;
+    }
+    let (cov, words) = text::coverage_detail(source, out);
+    let need = match level {
+        1 => 0.8,
+        2 => 0.7,
+        3 => 0.6,
+        _ => 0.5,
+    };
+    words < 5 || cov >= need
+}
+
+/// Dictation cleanup with a safety net: if a rewrite drops content (or turns a question into a
+/// request), retry at a gentler level; if that fails too, insert the transcript as spoken.
+/// Long transcripts on the on-device model are cleaned in chunks first, then (levels 4–5)
+/// restructured as a whole — small models otherwise summarize and lose the tail.
+async fn dictate_text(llm: &dyn LlmCall, s: &Settings, dictionary: &[String], raw: &str, ctx: &Context) -> (String, Option<String>) {
+    let level = prompts::cleanup_level(s);
+    let failed = |e: anyhow::Error| (raw.to_string(), Some(format!("llm_failed: {e}")));
+
+    if s.local_llm() && raw.chars().count() > LOCAL_CHUNK_OVER {
+        let base = level.min(3);
+        let mut parts = vec![];
+        for chunk in text::chunk_sentences(raw, LOCAL_CHUNK_SIZE) {
+            let mut done = None;
+            for lvl in [base, 2] {
+                match clean_once(llm, s, dictionary, &chunk, ctx, lvl).await {
+                    Ok(out) if kept_substance(&chunk, &out, lvl) => {
+                        done = Some(out);
+                        break;
+                    }
+                    Ok(_) => {}
+                    Err(e) => return failed(e),
+                }
+                if base <= 2 {
+                    break;
+                }
+            }
+            parts.push(done.unwrap_or(chunk));
+        }
+        let cleaned = parts.join(if parts.iter().any(|p| p.contains('\n')) { "\n" } else { " " });
+        if level <= 3 {
+            return (cleaned, None);
+        }
+        return match clean_once(llm, s, dictionary, &cleaned, ctx, level).await {
+            Ok(out) if kept_substance(&cleaned, &out, level) => (out, None),
+            Ok(_) => (cleaned, Some("cleanup_simplified".into())),
+            Err(e) => failed(e),
+        };
+    }
+
+    let mut lvl = level;
+    loop {
+        let answered;
+        match clean_once(llm, s, dictionary, raw, ctx, lvl).await {
+            Ok(out) if kept_substance(raw, &out, lvl) => {
+                return (out, (lvl < level).then(|| "cleanup_simplified".to_string()));
+            }
+            Ok(out) => {
+                answered = text::looks_like_assistant_reply(raw, &out);
+                log::warn!("cleanup level {lvl} rejected (coverage {:.2}, answered {answered})", text::coverage(raw, &out));
+            }
+            Err(e) => return failed(e),
+        }
+        if lvl <= 2 {
+            return (raw.to_string(), Some(if answered { "assistant_reply" } else { "cleanup_dropped" }.into()));
+        }
+        lvl = if lvl >= 4 { 3 } else { 2 };
+    }
+}
+
 pub async fn process_text(
     llm: &dyn LlmCall,
     s: &Settings,
@@ -100,43 +202,8 @@ pub async fn process_text(
     let minimal = Some(json!({"effort": "minimal", "exclude": true}));
     match mode {
         Mode::Dictate => {
-            let local = s.local_llm();
-            let (system, user) = if local { prompts::dictate_local(s, ctx, dictionary, raw) } else { prompts::dictate(s, ctx, dictionary, raw) };
-            let req = ChatRequest {
-                model: s.text_model(),
-                system,
-                user,
-                temperature: if local { 0.1 } else { 0.2 },
-                max_tokens: if local { 1024 } else { 4096 },
-                reasoning: minimal,
-                json_mode: false,
-                web: false,
-                examples: if local { prompts::local_examples() } else { vec![] },
-            };
-            match llm.complete(&req).await {
-                Ok(out) => {
-                    let out = text::clean_llm_output(&out);
-                    if text::looks_like_assistant_reply(raw, &out) {
-                        Ok(Processed {
-                            output: raw.to_string(),
-                            action: AskAction::Insert,
-                            url: None,
-                            llm_ms: t.elapsed().as_millis() as u64,
-                            fallback_reason: Some("assistant_reply".into()),
-                        })
-                    } else {
-                        Ok(Processed { output: out, action: AskAction::Insert, url: None, llm_ms: t.elapsed().as_millis() as u64, fallback_reason: None })
-                    }
-                }
-                // Network/LLM failure: still deliver the raw transcript rather than losing it.
-                Err(e) => Ok(Processed {
-                    output: raw.to_string(),
-                    action: AskAction::Insert,
-                    url: None,
-                    llm_ms: t.elapsed().as_millis() as u64,
-                    fallback_reason: Some(format!("llm_failed: {e}")),
-                }),
-            }
+            let (output, note) = dictate_text(llm, s, dictionary, raw, ctx).await;
+            Ok(Processed { output, action: AskAction::Insert, url: None, llm_ms: t.elapsed().as_millis() as u64, fallback_reason: note })
         }
         Mode::Translate { target } => {
             let (system, user, examples) = if s.local_llm() {
@@ -236,7 +303,7 @@ pub async fn run_one_step(
 ) -> Result<Outcome> {
     let t = Instant::now();
     let base = match mode {
-        Mode::Dictate => prompts::dictate(s, ctx, dictionary, "").0,
+        Mode::Dictate => prompts::dictate(s, ctx, dictionary, "", prompts::cleanup_level(s)).0,
         Mode::Translate { target } => prompts::translate(s, ctx, dictionary, "", &target.name).0,
         Mode::Ask => anyhow::bail!("one-step mode doesn't handle Ask"),
     };

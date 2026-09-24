@@ -1,6 +1,8 @@
 //! Compare cleanup styles / models on messy transcripts (text only, no audio).
 //! cargo run -p sori-core --example polish_eval -- model1 model2 …   (OPENROUTER_API_KEY from env)
 //! A model of the form `local:<name>@http://127.0.0.1:8080` uses a local llama-server.
+//! STYLE=minimal|light|clean|polished|agent picks the cleanup level (default: settings default).
+//! EVAL_FILE=cases.json adds private cases: [{"app","bundle","title","raw"}] (keep real dictations out of git).
 use sori_core::{pipeline, settings::Settings, Context, Mode};
 
 /// (app, bundle id, window title, raw transcript). Mostly dictation into coding agents — the
@@ -23,7 +25,19 @@ async fn main() -> anyhow::Result<()> {
     base.openrouter_api_key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
     let models: Vec<String> = std::env::args().skip(1).collect();
     let only: Option<usize> = std::env::var("CASE").ok().and_then(|v| v.parse().ok());
-    for (i, (app, bundle, title, raw)) in CASES.iter().enumerate() {
+    if let Ok(style) = std::env::var("STYLE") {
+        base.cleanup_style = style;
+    }
+    let mut cases: Vec<(String, String, String, String)> =
+        CASES.iter().map(|(a, b, t, r)| (a.to_string(), b.to_string(), t.to_string(), r.to_string())).collect();
+    if let Ok(path) = std::env::var("EVAL_FILE") {
+        let extra: Vec<serde_json::Value> = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        for c in extra {
+            let f = |k: &str| c[k].as_str().unwrap_or("").to_string();
+            cases.push((f("app"), f("bundle"), f("title"), f("raw")));
+        }
+    }
+    for (i, (app, bundle, title, raw)) in cases.iter().enumerate() {
         if only.is_some_and(|o| o != i) {
             continue;
         }
@@ -37,7 +51,13 @@ async fn main() -> anyhow::Result<()> {
             let local = m.strip_prefix("local:").and_then(|x| x.split_once('@')).map(|(_, url)| sori_core::llm::LocalServer { http: &http, base_url: url.to_string(), api_key: String::new() });
             let llm: &dyn sori_core::llm::LlmCall = match &local { Some(l) => l, None => &or };
             match pipeline::process_text(llm, &s, &[], raw, &Mode::Dictate, &ctx).await {
-                Ok(p) => println!("--- {m} ({}ms){}\n{}", p.llm_ms, p.fallback_reason.map(|r| format!(" [{r}]")).unwrap_or_default(), p.output),
+                Ok(p) => println!(
+                    "--- {m} ({}ms, coverage {:.2}){}\n{}",
+                    p.llm_ms,
+                    sori_core::text::coverage(raw, &p.output),
+                    p.fallback_reason.map(|r| format!(" [{r}]")).unwrap_or_default(),
+                    p.output
+                ),
                 Err(e) => println!("--- {m}: ERROR {e}"),
             }
         }
