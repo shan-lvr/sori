@@ -230,6 +230,7 @@ function Shortcuts({ settings: s, save }: Props) {
     ["translate", L("Translate", "번역하기"), L("Speak in your language; Sori pastes it in the target language.", "모국어로 말하면 번역 대상 언어로 바꿔 붙여넣습니다.")],
     ["ask", L("Ask anything", "무엇이든 물어보세요"), L("Edit selected text, ask questions, get writing help.", "선택한 텍스트 편집, 질문, 글쓰기 도우미.")],
   ];
+  const askOff = s.llm_provider === "local";
   return (
     <>
       <h2>{L("Shortcuts", "단축키")}</h2>
@@ -248,7 +249,19 @@ function Shortcuts({ settings: s, save }: Props) {
           </select>
         </Row>
         {rows.map(([k, title, desc]) => (
-          <Row key={k} title={title} desc={desc}>
+          <div key={k} className={k === "ask" && askOff ? "row-disabled" : undefined}>
+          <Row
+            title={title}
+            desc={
+              k === "ask" && askOff ? (
+                <>
+                  {desc} <span className="tag-off">{L("API mode only — admin", "API 모드 전용 — 관리자")}</span>
+                </>
+              ) : (
+                desc
+              )
+            }
+          >
             <div className={`shortcut-box ${recording === k ? "recording" : ""}`}>
               {s.shortcuts[k].map((c, i) => (
                 <span key={i} className="shortcut-combo">
@@ -257,7 +270,7 @@ function Shortcuts({ settings: s, save }: Props) {
                       {keyLabel(key)}
                     </span>
                   ))}
-                  <button className="mini x" title={L("Remove", "제거")} onClick={() => remove(k, i)}>
+                  <button className="mini x" title={L("Remove", "제거")} disabled={k === "ask" && askOff} onClick={() => remove(k, i)}>
                     ✕
                   </button>
                 </span>
@@ -277,12 +290,13 @@ function Shortcuts({ settings: s, save }: Props) {
                   {L("Cancel", "취소")}
                 </button>
               ) : (
-                <button className="btn small" onClick={() => start(k)} disabled={!!recording}>
+                <button className="btn small" onClick={() => start(k)} disabled={!!recording || (k === "ask" && askOff)}>
                   {L("Add", "추가하기")}
                 </button>
               )}
             </div>
           </Row>
+          </div>
         ))}
         {msg && <p className="hint" style={{ color: "var(--accent)" }}>{msg}</p>}
         <button

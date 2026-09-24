@@ -406,8 +406,14 @@ impl App {
         if self.session.lock().is_some() {
             return;
         }
-        self.stop_mic_test();
         let settings = self.settings.read().clone();
+        if action == Action::Ask && !settings.ask_available() {
+            // Local AI can't answer questions or look things up: say so instead of recording.
+            self.engine.lock().reset();
+            self.show_message(tr(&settings, "Ask anything needs API mode — admin only", "무엇이든 물어보기는 API 모드에서만 돼요 — 관리자 전용"), "info", 2200);
+            return;
+        }
+        self.stop_mic_test();
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let hud = self.handle.clone();
         let level = Arc::new(move |l: f32| {
@@ -478,6 +484,9 @@ impl App {
         let mut guard = self.session.lock();
         let Some(s) = guard.as_mut() else { return };
         log::info!("session switch: {action:?}");
+        if action == Action::Ask && !self.settings.read().ask_available() {
+            return; // keep dictating
+        }
         s.action = action;
         if action == Action::Ask {
             // Re-capture including the selection (⌘C fallback) now that we know it's Ask.

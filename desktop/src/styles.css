@@ -342,3 +342,11 @@ button.hud-chip:hover { background: rgba(50, 50, 56, 0.95); }
 .dl-pill-bar > span { display: block; height: 100%; background: var(--accent); transition: width 0.25s linear; }
 .dl-pill.bad .dl-pill-bar > span { background: var(--danger); }
 .dl-pill.idle .dl-pill-bar > span { background: var(--faint); }
+
+/* Features that need API mode (admin only) */
+.row-disabled { opacity: 0.5; }
+.row-disabled .kbd { filter: grayscale(1); }
+.tag-off {
+  display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; color: var(--muted); background: var(--panel-3); vertical-align: middle;
+}

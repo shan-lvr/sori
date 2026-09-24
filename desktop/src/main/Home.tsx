@@ -64,6 +64,7 @@ export default function Home(props: {
   }, [props.historyTick]);
 
   const { settings, perms } = props;
+  const askOff = settings.llm_provider === "local";
   return (
     <div className="page">
       <h1 className="hero">{t.heroTitle}</h1>
@@ -147,8 +148,10 @@ export default function Home(props: {
             </h3>
             <Keys combos={settings.shortcuts.translate} />
           </div>
-          <div className="shortcut-row" style={{ marginBottom: 6 }}>
-            <h3>{t.ask}</h3>
+          <div className={`shortcut-row ${askOff ? "row-disabled" : ""}`} style={{ marginBottom: 6 }}>
+            <h3>
+              {t.ask} {askOff && <span className="tag-off">{L("API mode only — admin", "API 모드 전용 — 관리자")}</span>}
+            </h3>
             <Keys combos={settings.shortcuts.ask} />
           </div>
           <p className="hint" style={{ marginTop: 14 }}>
@@ -170,6 +173,7 @@ export default function Home(props: {
               </>
             )}
           </p>
+          {!askOff && (
           <p className="hint">
             {L("Select text and press ", "텍스트를 선택하고 ")}
             <b>{comboLabel(settings.shortcuts.ask[0])}</b>
@@ -178,6 +182,7 @@ export default function Home(props: {
               "로 “더 정중하게”, “요약해줘”처럼 말하면 선택 영역을 바꾸거나 답해 줍니다.",
             )}
           </p>
+          )}
           {perms && !perms.fn_managed && perms.fn_usage_type !== null && perms.fn_usage_type !== 0 && (
             <p className="hint" style={{ color: "var(--warn)" }}>
               {L("The 🌐 key is set to “", "🌐 키가 “")}

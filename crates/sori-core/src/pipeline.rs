@@ -159,6 +159,7 @@ pub async fn process_text(
             let out = text::clean_llm_output(&llm.complete(&req).await?);
             Ok(Processed { output: out, action: AskAction::Insert, url: None, llm_ms: t.elapsed().as_millis() as u64, fallback_reason: None })
         }
+        Mode::Ask if !s.ask_available() => anyhow::bail!("Ask anything needs API mode (admin only)"),
         Mode::Ask => {
             let (system, user) = prompts::ask(s, ctx, dictionary, raw);
             let req = ChatRequest {

@@ -151,6 +151,11 @@ impl Settings {
         self.llm_provider == "local"
     }
 
+    /// Ask anything needs a cloud model (answers, web lookups): API mode, i.e. admin only.
+    pub fn ask_available(&self) -> bool {
+        !self.local_llm()
+    }
+
     /// Model id for cleanup/translation on the selected backend.
     pub fn text_model(&self) -> String {
         if self.local_llm() { self.local_llm_model.clone() } else { self.llm_model.clone() }

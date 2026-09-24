@@ -165,9 +165,9 @@ const mk = (id: string, kind: "stt" | "llm", label: string, size: number, licens
   id, kind, label, size, license, installed: false, loaded: false, downloading: false, partial: 0, paused: false, download: null, stop: "", failed: false,
 });
 const models: MockModel[] = [
-  mk("whisper-large-v3-turbo-q5_0", "stt", "Whisper large-v3-turbo (q5)", 574041195, "MIT"),
-  mk("gemma-4-e2b", "llm", "Gemma 4 E2B (Q4_K_M)", 3106738272, "Apache-2.0"),
-  mk("kanana-2-1.3b", "llm", "Kanana-2 1.3B (Q4_K_M)", 853655776, "Kanana Open License"),
+  mk("whisper-large-v3-turbo-q5_0", "stt", "Whisper", 574041195, "MIT"),
+  mk("gemma-4-e2b", "llm", "Gemma", 3106738272, "Apache-2.0"),
+  mk("kanana-2-1.3b", "llm", "Kanana", 853655776, "Kanana Open License"),
 ];
 const findModel = (id: unknown) => models.find((m) => m.id === id) ?? models[0];
 const emitDl = (m: MockModel, d: MockDl) => {
