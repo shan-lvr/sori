@@ -63,12 +63,37 @@ impl LocalStt {
         }
         let path = self.store.path(id)?;
         let t = Instant::now();
+        let (gpu, gpu_name, discrete) = preferred_gpu();
+        // Flash attention: a win on Metal and discrete GPUs (RTX 5080: 0.2 s vs 0.32 s per
+        // clip), but Vulkan on an integrated GPU falls back to a slow path (Intel Arrow Lake
+        // iGPU: 22 s vs 6.4 s per clip) — so off there.
+        let flash_attn = cfg!(target_os = "macos") || discrete;
         let mut params = WhisperContextParameters::default();
-        params.use_gpu(true).flash_attn(true);
+        params.use_gpu(true).flash_attn(flash_attn).gpu_device(gpu);
         let ctx = WhisperContext::new_with_params(&path, params).map_err(|e| anyhow!("Could not load the model: {e}"))?;
-        let state = ctx.create_state().map_err(|e| anyhow!("Could not initialize the model: {e}"))?;
+        let mut state = ctx.create_state().map_err(|e| anyhow!("Could not initialize the model: {e}"))?;
+        log::info!("local stt loaded {id} in {}ms on {gpu_name} (flash attention {})", t.elapsed().as_millis(), if flash_attn { "on" } else { "off" });
+        // The first inference builds the GPU pipelines — with Vulkan that took 33 s for the first
+        // dictation after install (the driver caches them afterwards). Do it here, during the
+        // background preload, on a second of silence with a single decoded token. (Not on the
+        // CPU: nothing to build, and it would hold the model for a whole slow inference.)
+        if gpu_name != "CPU" {
+            let t = Instant::now();
+            let mut p = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+            p.set_language(Some("en"));
+            p.set_max_tokens(1);
+            p.set_no_timestamps(true);
+            p.set_no_context(true);
+            p.set_print_special(false);
+            p.set_print_progress(false);
+            p.set_print_realtime(false);
+            p.set_print_timestamps(false);
+            match state.full(p, &[0.0f32; 16_000]) {
+                Ok(_) => log::info!("local stt warmed up in {}ms", t.elapsed().as_millis()),
+                Err(e) => log::warn!("local stt warm-up failed: {e}"),
+            }
+        }
         *self.loaded.lock() = Some(Loaded { id: id.into(), _ctx: ctx, state });
-        log::info!("local stt loaded {id} in {}ms", t.elapsed().as_millis());
         Ok(())
     }
 
@@ -113,6 +138,33 @@ impl LocalStt {
         Ok(Transcript { text: clean_hallucinations(text.trim()), language, ms: t.elapsed().as_millis() as u64 })
     }
 
+}
+
+/// The GPU whisper.cpp should use, as its `gpu_device` index (it counts discrete and integrated
+/// GPUs together, in the order the driver lists them), its name for the log, and whether it is
+/// discrete. Prefers a discrete GPU like llama.cpp does: otherwise a PC with both (common on
+/// Windows laptops) runs speech on the slower integrated GPU while the text model sits on the
+/// discrete one. One GPU (Apple Silicon) → index 0, same as whisper's default.
+fn preferred_gpu() -> (i32, String, bool) {
+    use whisper_rs::whisper_rs_sys as sys;
+    let mut gpus = vec![];
+    unsafe {
+        for i in 0..sys::ggml_backend_dev_count() {
+            let dev = sys::ggml_backend_dev_get(i);
+            let kind = sys::ggml_backend_dev_type(dev);
+            let discrete = kind == sys::ggml_backend_dev_type_GGML_BACKEND_DEVICE_TYPE_GPU;
+            if discrete || kind == sys::ggml_backend_dev_type_GGML_BACKEND_DEVICE_TYPE_IGPU {
+                let desc = sys::ggml_backend_dev_description(dev);
+                let name = if desc.is_null() { String::new() } else { std::ffi::CStr::from_ptr(desc).to_string_lossy().into_owned() };
+                gpus.push((discrete, name));
+            }
+        }
+    }
+    let idx = gpus.iter().position(|(discrete, _)| *discrete).unwrap_or(0);
+    match gpus.get(idx) {
+        Some((discrete, name)) => (idx as i32, name.clone(), *discrete),
+        None => (0, "CPU".to_string(), false),
+    }
 }
 
 /// Whisper's initial prompt: biases spelling toward the user's vocabulary (English terms in
