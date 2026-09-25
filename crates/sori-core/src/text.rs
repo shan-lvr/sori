@@ -163,9 +163,51 @@ pub fn chunk_sentences(text: &str, max: usize) -> Vec<String> {
 }
 
 /// The speaker asked something but the rewrite has no question left (a question turned into
-/// a request or an answer).
+/// a request or an answer). Questions that are really polite requests — "can you check …?",
+/// "좀 봐 줄래?" — may become instructions: that is the cleanup a coding-agent prompt wants.
 pub fn lost_question(source: &str, out: &str) -> bool {
-    source.contains('?') && !out.contains('?') && !out.contains('？')
+    if out.contains('?') || out.contains('？') {
+        return false;
+    }
+    question_sentences(source).iter().any(|q| !is_polite_request(q))
+}
+
+fn question_sentences(text: &str) -> Vec<String> {
+    let mut found = vec![];
+    let mut cur = String::new();
+    for c in text.chars() {
+        cur.push(c);
+        match c {
+            '?' | '？' => found.push(std::mem::take(&mut cur)),
+            '.' | '!' | '\n' | '。' => cur.clear(),
+            _ => {}
+        }
+    }
+    found
+}
+
+/// Asking someone to do something: "(um, so) can/could/would/will you …?", "… please …?",
+/// "~해 줄래?", "~해 줄 수 있어?", "~해 주실래요?", "~해 주면 안 돼?".
+fn is_polite_request(question: &str) -> bool {
+    const FILLERS: &[&str] = &["um", "uh", "so", "and", "okay", "ok", "also", "hey", "well", "oh", "like", "then", "but", "actually"];
+    let lower = question.to_lowercase();
+    let words: Vec<&str> = lower.split(|c: char| !c.is_alphanumeric() && c != '\'').filter(|w| !w.is_empty()).collect();
+    let mut rest = words.iter().skip_while(|w| FILLERS.contains(w));
+    if let (Some(first), Some(second)) = (rest.next(), rest.next()) {
+        if matches!(*first, "can" | "could" | "would" | "will") && matches!(*second, "you" | "u" | "we") {
+            return true;
+        }
+    }
+    if words.contains(&"please") {
+        return true;
+    }
+    const KO_ENDINGS: &[&str] = &[
+        "줄래", "줄래요", "줄수있어", "줄수있어요", "줄수있니", "줄수있나", "줄수있나요", "줄수있을까", "줄수있을까요",
+        "줄수있겠어", "줄수있겠어요", "주겠어", "주겠어요", "주겠니", "주실래요", "주시겠어요", "주실수있나요",
+        "주실수있을까요", "주실수있어요", "주면안돼", "주면안돼요", "주면안될까", "주면안될까요",
+    ];
+    let compact: String = question.chars().filter(|c| !c.is_whitespace() && !matches!(c, '?' | '？' | '~' | '.' | '!')).collect();
+    KO_ENDINGS.iter().any(|e| compact.ends_with(e))
 }
 
 #[cfg(test)]
@@ -202,6 +244,26 @@ mod coverage_tests {
     fn detects_question_turned_into_request() {
         assert!(lost_question("비밀번호를 맞게 입력해도 통과할 수 없는 거야?", "비밀번호를 맞게 입력해도 통과할 수 없게 해 줘."));
         assert!(!lost_question("비밀번호를 맞게 입력해도 통과할 수 없는 거야?", "비밀번호를 맞게 입력해도 통과할 수 없는 거야?"));
+        assert!(lost_question("What does the cache reuse flag actually do?", "The cache reuse flag reuses the KV cache."));
+    }
+
+    #[test]
+    fn polite_requests_may_become_instructions() {
+        // Seen on Windows: every level rewrote these as instructions, all were rejected, and the
+        // transcript went in with its "um"s.
+        assert!(!lost_question(
+            "Um, so can you check why the login test is failing? And uh, don't commit anything yet, just tell me what you find.",
+            "Check why the login test is failing. Don't commit anything yet, just tell me what you find."
+        ));
+        assert!(!lost_question(
+            "음 그 로그인 테스트 왜 실패하는지 좀 봐 줄래? 그리고 아직 커밋은 하지 말고 뭐 찾았는지만 알려 줘",
+            "로그인 테스트가 왜 실패하는지 좀 봐 줘. 아직 커밋은 하지 말고 찾은 내용만 알려 줘."
+        ));
+        assert!(!lost_question("이거 리드미에 정리해 줄 수 있어?", "이거 README에 정리해 줘."));
+        assert!(!lost_question("Could you please rename the hook?", "Rename the hook."));
+        // A real question next to a request still has to stay a question.
+        assert!(lost_question("Can you fix the build? And why did it break?", "Fix the build, and check why it broke."));
+        assert!(lost_question("Why would you cache that?", "Don't cache that."));
     }
 }
 

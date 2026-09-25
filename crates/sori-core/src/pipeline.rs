@@ -179,7 +179,11 @@ async fn dictate_text(llm: &dyn LlmCall, s: &Settings, dictionary: &[String], ra
             }
             Ok(out) => {
                 answered = text::looks_like_assistant_reply(raw, &out);
-                log::warn!("cleanup level {lvl} rejected (coverage {:.2}, answered {answered})", text::coverage(raw, &out));
+                log::warn!(
+                    "cleanup level {lvl} rejected (coverage {:.2}, answered {answered}, lost question {})",
+                    text::coverage(raw, &out),
+                    text::lost_question(raw, &out)
+                );
             }
             Err(e) => return failed(e),
         }
