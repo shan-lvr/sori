@@ -89,7 +89,7 @@ pub fn classify(ctx: &Context) -> AppCategory {
         "jp.naver.line", "messenger", "us.zoom", "signal", "wechat", "teams", "zoom.exe", "line.exe",
     ], &b) {
         AppCategory::Chat
-    } else if has(&["com.openai.chat", "com.openai.codex", "com.anthropic.claude", "perplexity", "chatgpt", "win:claude.exe", "win:codex.exe", "conductor"], &b) {
+    } else if has(&["com.openai.chat", "com.openai.codex", "com.anthropic.claude", "perplexity", "chatgpt", "win:claude.exe", "win:codex.exe", "conductor", "com.stablyai.orca", "win:orca.exe"], &b) {
         AppCategory::Ai
     } else if has(&[
         "vscode", "com.todesktop", "cursor", "dev.zed", "com.jetbrains", "com.apple.dt.xcode", "iterm", "com.apple.terminal",
@@ -575,6 +575,16 @@ mod lang_tests {
         assert_eq!(language_hint("음 그러니까 내일 회의는 네 시로 하자"), "Korean");
         assert_eq!(language_hint("이 컴포넌트에서 useEffect가 두 번 불리는데 React Query로 옮기자"), "Korean");
         assert_eq!(language_hint("PR 리뷰 부탁해요 thanks for the quick fix on the auth bug"), "Korean with English terms");
+    }
+
+    #[test]
+    fn coding_agent_apps_are_ai() {
+        use super::{classify, AppCategory};
+        use crate::pipeline::Context;
+        for bundle in ["com.stablyai.orca", "com.anthropic.claudefordesktop", "com.openai.codex"] {
+            let ctx = Context { bundle_id: bundle.into(), ..Default::default() };
+            assert_eq!(classify(&ctx), AppCategory::Ai, "{bundle}");
+        }
     }
 
     #[test]
