@@ -59,6 +59,11 @@ jobs:
   windows:
     needs: test
     runs-on: windows-latest
+    env:
+      # whisper.cpp (via whisper-rs-sys, which forwards GGML_* to CMake) would otherwise target the
+      # runner's CPU — possibly AVX-512, which most desktop Intel CPUs lack (illegal instruction).
+      # OFF = the same portable AVX2 baseline as the llama-server sidecar.
+      GGML_NATIVE: "OFF"
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable

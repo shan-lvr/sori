@@ -1,0 +1,5 @@
+# Windows: link the C/C++ runtime statically. Otherwise Sori.exe needs MSVCP140.dll (whisper.cpp
+# is C++) from the Visual C++ redistributable, which a clean Windows install doesn't have — and
+# then the app doesn't start at all. (The llama-server sidecar is built with /MT for the same reason.)
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
