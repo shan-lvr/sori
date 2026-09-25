@@ -306,7 +306,7 @@ impl ModelStore {
                 let _ = std::fs::remove_file(&part);
                 bail!("The downloaded file was corrupted (checksum mismatch). Please download again.");
             }
-            std::fs::rename(&part, self.dir.join(m.file))?;
+            retry_if_busy(|| std::fs::rename(&part, self.dir.join(m.file)))?;
             let _ = std::fs::File::open(&self.dir).and_then(|d| d.sync_all());
             return Ok(());
         }
@@ -377,12 +377,29 @@ impl ModelStore {
         let m = model(id)?;
         let p = self.path(id)?;
         if Path::new(&p).exists() {
-            std::fs::remove_file(p)?;
+            retry_if_busy(|| std::fs::remove_file(&p))?;
         }
         let _ = std::fs::remove_file(self.part_path(m));
         let _ = std::fs::write(self.paused_marker(m), b"");
         self.state.lock().remove(id);
         Ok(())
+    }
+}
+
+/// Windows: a freshly written multi-GB file is often held open for a moment by another process
+/// (antivirus scan, indexer), and deleting/renaming it then fails with a sharing violation —
+/// seen once in testing as "(os error 32)" on Delete. Retry for up to ~3 s.
+fn retry_if_busy<T>(mut op: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    let mut tries = 0;
+    loop {
+        match op() {
+            // ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION
+            Err(e) if cfg!(windows) && matches!(e.raw_os_error(), Some(32 | 33)) && tries < 15 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            other => return other,
+        }
     }
 }
 

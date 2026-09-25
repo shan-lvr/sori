@@ -228,7 +228,7 @@ fn wait_modifiers_released(max: Duration) {
 
 // ------------------------------------------------------------------ context
 
-fn exe_name(pid: u32) -> String {
+fn exe_path(pid: u32) -> String {
     unsafe {
         let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
         if h.is_null() {
@@ -241,8 +241,37 @@ fn exe_name(pid: u32) -> String {
         if ok == 0 {
             return String::new();
         }
-        let path = String::from_utf16_lossy(&buf[..len as usize]);
-        path.rsplit(['\\', '/']).next().unwrap_or("").to_string()
+        String::from_utf16_lossy(&buf[..len as usize])
+    }
+}
+
+/// The exe's FileDescription ("Google Chrome", "Windows Terminal") — what History shows, instead
+/// of the file name ("chrome", "WindowsTerminal").
+fn file_description(path: &str) -> Option<String> {
+    use windows_sys::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW};
+    let w = wide(path);
+    unsafe {
+        let size = GetFileVersionInfoSizeW(w.as_ptr(), std::ptr::null_mut());
+        if size == 0 {
+            return None;
+        }
+        let mut data = vec![0u8; size as usize];
+        if GetFileVersionInfoW(w.as_ptr(), 0, size, data.as_mut_ptr() as *mut c_void) == 0 {
+            return None;
+        }
+        let (mut ptr, mut len): (*mut c_void, u32) = (std::ptr::null_mut(), 0);
+        // First (language, code page) pair, then that language's FileDescription.
+        if VerQueryValueW(data.as_ptr() as *const c_void, wide("\\VarFileInfo\\Translation").as_ptr(), &mut ptr, &mut len) == 0 || len < 4 {
+            return None;
+        }
+        let (lang, cp) = (*(ptr as *const u16), *(ptr as *const u16).add(1));
+        let key = wide(&format!("\\StringFileInfo\\{lang:04x}{cp:04x}\\FileDescription"));
+        if VerQueryValueW(data.as_ptr() as *const c_void, key.as_ptr(), &mut ptr, &mut len) == 0 || len == 0 {
+            return None;
+        }
+        let s = String::from_utf16_lossy(std::slice::from_raw_parts(ptr as *const u16, len as usize));
+        let s = s.trim_end_matches('\0').trim().to_string();
+        (!s.is_empty() && s.chars().count() <= 40).then_some(s)
     }
 }
 
@@ -269,7 +298,8 @@ pub fn capture_context(want_selection: bool) -> Captured {
             return Captured { pid: pid as i32, app_name: "Sori".into(), ..Default::default() };
         }
         LAST_HWND.store(hwnd as isize, Ordering::SeqCst);
-        let exe = exe_name(pid);
+        let path = exe_path(pid);
+        let exe = path.rsplit(['\\', '/']).next().unwrap_or("").to_string();
         let mut info: GUITHREADINFO = std::mem::zeroed();
         info.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
         let caret = GetGUIThreadInfo(thread, &mut info) != 0 && !info.hwndCaret.is_null();
@@ -279,7 +309,7 @@ pub fn capture_context(want_selection: bool) -> Captured {
         };
         let mut c = Captured {
             pid: pid as i32,
-            app_name: display_name(&exe),
+            app_name: file_description(&path).unwrap_or_else(|| display_name(&exe)),
             bundle_id: format!("win:{}", exe.to_lowercase()),
             window_title: window_title(hwnd),
             // No caret doesn't prove there's no field (Chromium/Electron apps draw their own),
@@ -411,6 +441,33 @@ pub fn mute_output() -> bool {
     false
 }
 pub fn unmute_output() {}
+
+// ------------------------------------------------------------------ child processes
+
+/// Tie a child process (llama-server) to Sori's lifetime: it goes into a job object whose only
+/// handle is ours, so Windows kills it when Sori exits — also on a crash or a forced kill, which
+/// would otherwise leave a ~2 GB server running and its .exe locked against updates.
+pub fn kill_with_app(process: std::os::windows::io::RawHandle) {
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    static JOB: OnceLock<isize> = OnceLock::new();
+    let job = *JOB.get_or_init(|| unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            return 0;
+        }
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let size = std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32;
+        SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info as *const _ as *const c_void, size);
+        job as isize
+    });
+    if job == 0 || unsafe { AssignProcessToJobObject(job as _, process as _) } == 0 {
+        log::warn!("could not tie the child process to Sori's lifetime");
+    }
+}
 
 // ------------------------------------------------------------------ permissions
 

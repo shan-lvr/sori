@@ -105,6 +105,10 @@ impl LlmServer {
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         let t = Instant::now();
         let mut child = cmd.spawn().with_context(|| format!("Could not start {}", bin.display()))?;
+        #[cfg(windows)]
+        if let Some(h) = child.raw_handle() {
+            crate::platform::kill_with_app(h);
+        }
         let base_url = format!("http://127.0.0.1:{port}");
         // Wait for the model to load.
         loop {
