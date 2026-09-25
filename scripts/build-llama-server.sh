@@ -12,7 +12,11 @@ EXT=""; [[ "$TRIPLE" == *windows* ]] && EXT=".exe"
 OUT="$ROOT/desktop/src-tauri/binaries/llama-server-$TRIPLE$EXT"
 if [ -x "$OUT" ] && [ "${FORCE:-0}" != "1" ]; then echo "✓ $OUT (cached)"; exit 0; fi
 
-[ -d "$SRC" ] || git clone --quiet --depth 1 --branch "$TAG" https://github.com/ggml-org/llama.cpp "$SRC"
+# CI caches restore `target/` partially: only trust a checkout that is complete.
+if [ ! -f "$SRC/CMakeLists.txt" ]; then
+  rm -rf "$SRC"
+  git clone --quiet --depth 1 --branch "$TAG" https://github.com/ggml-org/llama.cpp "$SRC"
+fi
 FLAGS=(-DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF -DLLAMA_OPENSSL=OFF
        -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_TOOLS=ON -DGGML_NATIVE=OFF)
 case "$TRIPLE" in
