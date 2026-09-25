@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { api, Settings } from "./api";
+import { Settings, settingsWhenReady } from "./api";
 import { inTauri, on } from "./bridge";
 
 const ko = {
@@ -80,7 +80,7 @@ export const dateLocale = (lang: Lang | string | undefined) => (lang === "ko" ? 
 export function useOverlayLang(): Lang {
   const [lang, setLang] = useState<Lang>("en");
   useEffect(() => {
-    api.getSettings().then((s) => setLang(s.interface_language === "ko" ? "ko" : "en"));
+    settingsWhenReady().then((s) => setLang(s.interface_language === "ko" ? "ko" : "en"));
     if (!inTauri) return;
     const un = on<Settings>("settings-changed", (e) => setLang(e.payload.interface_language === "ko" ? "ko" : "en"));
     return () => {

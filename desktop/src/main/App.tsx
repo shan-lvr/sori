@@ -1,6 +1,6 @@
 import { ReactNode, useCallback, useEffect, useState } from "react";
 import { on as listen } from "../bridge";
-import { api, PermState, Settings } from "../api";
+import { api, PermState, Settings, settingsWhenReady } from "../api";
 import { LangContext, useL, useT } from "../i18n";
 import { IconBook, IconClock, IconGear, IconHome, IconInfo } from "../icons";
 import Home from "./Home";
@@ -35,7 +35,7 @@ export default function MainApp() {
   const refreshPerms = useCallback(() => api.getPermissions().then(setPerms).catch(() => {}), []);
 
   useEffect(() => {
-    api.getSettings().then(setSettings);
+    settingsWhenReady().then(setSettings);
     refreshPerms();
     const uns = [
       listen<Settings>("settings-changed", (e) => setSettings(e.payload)),

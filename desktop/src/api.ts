@@ -207,6 +207,22 @@ export function isOk<T>(r: Res<T>): r is { Ok: T } {
   return "Ok" in r;
 }
 
+/**
+ * Settings for a window that just loaded. Tauri creates the windows before the app's setup hook
+ * has registered its state, and WebView2 (Windows) can load the page first — so the very first
+ * call may fail. Retry for a few seconds instead of leaving the window blank.
+ */
+export async function settingsWhenReady(): Promise<Settings> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await api.getSettings();
+    } catch (e) {
+      if (attempt >= 50) throw e;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+}
+
 const KEY_LABELS: Record<string, string> = {
   Fn: "Fn",
   ShiftLeft: "Left Shift",
@@ -221,8 +237,8 @@ const KEY_LABELS: Record<string, string> = {
   Lang2: "한자",
   Space: "Space",
   Escape: "Esc",
-  Enter: "Return",
-  Backspace: "Delete",
+  Enter: isWin ? "Enter" : "Return",
+  Backspace: isWin ? "Backspace" : "Delete",
   MouseMiddle: "Middle click",
   Mouse4: "Mouse back",
   Mouse5: "Mouse forward",

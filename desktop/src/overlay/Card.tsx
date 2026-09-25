@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { inTauri, on as listen, PASTE } from "../bridge";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { marked } from "marked";
-import { api, CardContent, Settings } from "../api";
+import { api, CardContent, Settings, settingsWhenReady } from "../api";
 import { IconCopy, IconX } from "../icons";
 import { useTheme } from "../main/App";
 import { makeL, useOverlayLang } from "../i18n";
@@ -31,7 +31,7 @@ export default function Card() {
   const L = makeL(lang);
 
   useEffect(() => {
-    api.getSettings().then(setSettings);
+    settingsWhenReady().then(setSettings);
     if (!inTauri) {
       setC({
         kind: "answer",
