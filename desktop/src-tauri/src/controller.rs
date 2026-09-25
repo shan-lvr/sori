@@ -388,6 +388,7 @@ impl App {
     }
 
     /// Dev hook (SIGUSR1/SIGUSR2): start or finish a session without the keyboard.
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub fn debug_toggle(self: &Arc<Self>, action: Action) {
         if self.session.lock().is_some() {
             self.engine.lock().reset();
@@ -426,6 +427,9 @@ impl App {
             level,
             Box::new(move |e| {
                 log::error!("recorder start failed: {e}");
+                if debug_wav().is_some() {
+                    return; // the dev hook supplies the audio; no microphone needed (RDP, VMs)
+                }
                 if app_err.session.lock().as_ref().map(|s| s.id) == Some(id) {
                     // Runs on the recorder thread: don't call recorder.stop() here (it would wait on itself).
                     app_err.session.lock().take();
@@ -484,7 +488,13 @@ impl App {
         let Some(s) = guard.as_mut() else { return };
         log::info!("session switch: {action:?}");
         if action == Action::Ask && !self.settings.read().ask_available() {
-            return; // keep dictating
+            // The Ask shortcut is the dictate keys + one more (Ctrl+Win+Space, Fn+Space), so it
+            // always arrives as a switch: explain instead of silently dictating on.
+            drop(guard);
+            self.cancel();
+            let settings = self.settings.read().clone();
+            self.show_message(tr(&settings, "Ask anything needs API mode — admin only", "무엇이든 물어보기는 API 모드에서만 돼요 — 관리자 전용"), "info", 2200);
+            return;
         }
         s.action = action;
         if action == Action::Ask {
@@ -505,15 +515,11 @@ impl App {
         }
         let duration = session.started.elapsed();
         self.recorder.prepare(settings.microphone.clone());
-        let Some(mut rec) = rec else {
+        let Some(rec) = debug_wav().or(rec) else {
             log::warn!("finish: no recording");
             self.hide_hud();
             return;
         };
-        // Dev hook: replace the microphone audio with a file (`open --env SORI_DEBUG_WAV=… Sori.app`).
-        if let Some((samples, rate)) = std::env::var("SORI_DEBUG_WAV").ok().and_then(|p| std::fs::read(p).ok()).and_then(|b| audio::decode_wav(&b)) {
-            rec = Recording { samples, rate };
-        }
         let peak = rec.samples.iter().fold(0f32, |m, s| m.max(s.abs()));
         log::info!("session finish: {:?} {:.1}s, {} samples @{}Hz, peak {:.3}", session.action, duration.as_secs_f32(), rec.samples.len(), rec.rate, peak);
         if duration < MIN_RECORDING {
@@ -969,6 +975,14 @@ impl App {
         let y = area.position.y as f64 + area.size.height as f64 - (h + bottom) * scale;
         Some(PhysicalPosition::new(x.round() as i32, y.round() as i32))
     }
+}
+
+/// Dev hook: use a WAV file instead of the microphone (`open --env SORI_DEBUG_WAV=… Sori.app`,
+/// or set it before launching on Windows). Works without any microphone.
+fn debug_wav() -> Option<Recording> {
+    let bytes = std::fs::read(std::env::var_os("SORI_DEBUG_WAV")?).ok()?;
+    let (samples, rate) = audio::decode_wav(&bytes)?;
+    Some(Recording { samples, rate })
 }
 
 fn spawn_capture(want_selection: bool, pid_out: Arc<AtomicI32>) -> JoinHandle<Captured> {
