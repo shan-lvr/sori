@@ -1,6 +1,6 @@
 # Sori — status & handoff
 
-_Last updated: 2026-09-23. Written for whoever (human or coding agent) picks this up next — in particular for **verifying and finishing the Windows version on a real Windows PC**._
+_Last updated: 2026-09-25 (first run on a real Windows PC — see §2 for results). Written for whoever (human or coding agent) picks this up next._
 
 Sori is a voice-dictation app: press a shortcut in any text field, speak, and a cleaned-up version is pasted at the cursor. The owner uses it **mainly to dictate prompts to AI coding agents** (Claude Code, Codex, Cursor) instead of typing them; chat, email and notes are secondary. Everything runs on-device by default. See [README.md](../README.md) for the user-facing overview.
 
@@ -10,15 +10,15 @@ Sori is a voice-dictation app: press a shortcut in any text field, speak, and a 
 
 | Area | macOS (Apple Silicon) | Windows 10/11 |
 |---|---|---|
-| Builds | ✅ locally + CI (`.dmg`) | ✅ CI only (`nsis` installer) — never built on a real PC |
-| Runs / tested by a human | ✅ daily use | ❌ **not run on real hardware yet** |
-| Global shortcuts | ✅ CGEventTap, `Fn` (swallows the 🌐 action) | ⚠️ implemented (`WH_KEYBOARD_LL`/`WH_MOUSE_LL`), default `Ctrl+Win`, untested |
-| Paste at cursor | ✅ ⌘V via CGEvent | ⚠️ implemented (`SendInput` Ctrl+V), untested |
+| Builds | ✅ locally + CI (`.dmg`) | ✅ locally (Windows 11, VS 2022 Build Tools) + CI (`nsis`); see §2 Build for the path-length note |
+| Runs / tested | ✅ daily use | ✅ first real PC (2026-09-25): automated end-to-end with injected input over RDP · ⏳ human test with a real mic/keyboard at the PC |
+| Global shortcuts | ✅ CGEventTap, `Fn` (swallows the 🌐 action) | ✅ `Ctrl+Win` start/stop, no Start menu, lone Win still opens Start, Esc, Ask notice (injected input) |
+| Paste at cursor | ✅ ⌘V via CGEvent | ✅ Notepad, Chrome textarea, Windows Terminal; focus stays; clipboard restore ✅ |
 | Focused-field / selection detection | ✅ Accessibility API | ⚠️ only the system caret (`GetGUIThreadInfo`) + Ctrl+C for selection |
-| HUD voice bar / answer card | ✅ | ⚠️ untested (transparent, always-on-top, non-focusable, click-through) |
-| On-device speech (Whisper) | ✅ Metal | ⚠️ Vulkan build compiles in CI, untested |
-| On-device text model (llama-server) | ✅ Metal, measured | ⚠️ Vulkan sidecar compiles in CI, untested |
-| Model downloads (resume/verify) | ✅ tested (pause, kill -9, corrupt file) | shared code, untested on Windows |
+| HUD voice bar / answer card | ✅ | ✅ bottom-center, never takes focus (`WS_EX_NOACTIVATE`); answer card untested (Ask is admin-only) |
+| On-device speech (Whisper) | ✅ Metal | ✅ Vulkan: RTX 5080 0.2–0.4 s · ⚠️ Intel iGPU 8 s · ❌ CPU ~3 min per clip |
+| On-device text model (llama-server) | ✅ Metal, measured | ✅ Vulkan: RTX 5080 0.16–0.3 s per call · Intel iGPU ~2 s · CPU fallback works (no Vulkan driver) |
+| Model downloads (resume/verify) | ✅ tested (pause, kill -9, corrupt file) | ✅ parallel, resume after a forced quit, SHA-256 |
 | UI (English/Korean) | ✅ | same code; Windows-specific wording handled (`isWin`) |
 | Code signing | self-signed "Sori Dev" (local) / ad-hoc (CI); not notarized | unsigned → SmartScreen warning |
 
@@ -46,67 +46,78 @@ Sori is a voice-dictation app: press a shortcut in any text field, speak, and a 
 
 ## 2. Windows verification checklist
 
-Work through this on a real Windows PC. Each item says what to expect and where the code is. Log file: `%LOCALAPPDATA%\com.seyoon.sori\logs\sori.log`; data (settings, models, history): `%APPDATA%\com.seyoon.sori\`; llama-server output: `%APPDATA%\com.seyoon.sori\llama-server.log`.
+Log file: `%LOCALAPPDATA%\com.seyoon.sori\logs\sori.log` (UTC timestamps); data (settings, models, history): `%APPDATA%\com.seyoon.sori\`; llama-server output: `%APPDATA%\com.seyoon.sori\llama-server.log`.
+
+**First run, 2026-09-25** — Core Ultra 9 285K (Intel iGPU) + RTX 5080, Windows 11 Pro, over RDP. There was no capture device in the RDP session, so dictation ran end-to-end with injected input (`SendInput`: the LL hooks see it like real keys) and `SORI_DEBUG_WAV` (which now works without a mic) using English TTS clips; windows/focus/text were checked with Win32 + UI Automation and the WebView2 DevTools port (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=N`). ✅ verified · ❌ found broken (fixed unless noted) · ⏳ still needs a person at the PC (real mic/keyboard). Measurements: `docs/NOTES.ko.md` → "Windows 실기기 측정".
 
 ### Build
-- [ ] Easiest: download the `sori-windows` artifact from the latest green run of the `build` workflow on GitHub Actions and install it.
-- [ ] Local build: VS 2022 Build Tools (C++), CMake, LLVM (`LIBCLANG_PATH` for bindgen), Vulkan SDK, Rust stable, Node 22, Git Bash. Then:
+- ✅ Local build with VS 2022 Build Tools (C++), CMake, LLVM (`LIBCLANG_PATH` for bindgen), Vulkan SDK, Rust stable, Node 22, Git Bash:
   ```bash
   npm --prefix desktop ci
-  ./scripts/build-llama-server.sh          # Git Bash; builds binaries/llama-server-x86_64-pc-windows-msvc.exe (Vulkan, static CRT)
+  ./scripts/build-llama-server.sh          # Git Bash; binaries/llama-server-x86_64-pc-windows-msvc.exe (Vulkan, static CRT, no OpenMP)
   cd desktop && npx tauri build --bundles nsis
   ```
-  Dev loop: `cd desktop && npx tauri dev` (the sidecar must exist first).
+  ❌→✅ **Path length**: MSBuild fails (`MSB4018`/`MSB6003`, "260자") in ggml's nested `vulkan-shaders-gen` build when the checkout path is long (`C:\Users\<name>\…\sori\target\…` is enough). CI has long paths enabled. Locally either enable Windows long paths (`LongPathsEnabled=1`, admin) or use a short target dir: `$env:CARGO_TARGET_DIR="C:\t"` (the sidecar script follows it). Set `$env:GGML_NATIVE="OFF"` for installers you share (CI does) — otherwise whisper.cpp targets the build machine's CPU.
+- ❌→✅ Clean-PC dependencies: Sori.exe needed `MSVCP140.dll`, llama-server `VCOMP140.DLL` (VC++ redistributable). Now only system DLLs + `vulkan-1.dll` (`dumpbin /dependents`).
+- ✅ CI (`build` workflow) green on test/macos/windows.
 
 ### Install & first run
-- [ ] Installer runs per-user without an admin prompt (`bundle.windows.nsis.installMode = currentUser`). SmartScreen warning is expected (unsigned).
-- [ ] Main window opens; Home shows "Get set up" with Microphone, speech model, text model (no Accessibility step on Windows).
-- [ ] Settings → AI shows only Local AI; Admin mode unlocks with the owner's password only if the CI build had the `SORI_ADMIN_PASSWORD` secret (otherwise "not available in this build").
-- [ ] "Set up everything" → Windows mic consent if needed; both downloads start in parallel; sidebar shows two pills with %.
-- [ ] Quit mid-download (tray → Quit), relaunch → downloads resume from the same % (Range). Pull the network cable → "retrying (n/5)", then resumes.
-- [ ] After downloads: log shows `local stt loaded …` and `llama-server ready: gemma-4-e2b on :<port>` then `local llm primed`. **Record the startup time and whether Vulkan picked the GPU** (see `llama-server.log`: look for `ggml_vulkan: Found N Vulkan devices` and `offloaded N/N layers to GPU`).
+- ✅ Installer runs per-user without an admin prompt; HKCU uninstall entry; files in `%LOCALAPPDATA%\Sori`. SmartScreen not seen (the file had no Mark of the Web). ⏳ run it from Explorer — when launched from inside the Claude desktop app (MSIX) AppData writes are virtualized into `…\Packages\Claude_…\LocalCache`.
+- ❌→✅ **Main window was blank on every first launch** (Tauri creates windows before `setup` manages the state; WebView2's first `get_settings` failed and nothing retried). Fixed with `settingsWhenReady()`.
+- ✅ Settings → AI shows only Local AI (Whisper 574 MB, Gemma 3.1 GB, Kanana 0.85 GB); no Admin section in a build without `SORI_ADMIN_PASSWORD` (`admin_status.available=false`).
+- ✅ Both downloads start at first launch, in parallel (574 MB in 16 s, 3.1 GB in 59 s here). ✅ Forced quit at 378/574 MB → relaunch fetched only the remaining 177 MB (Range) → SHA-256 → installed. ⏳ "Set up everything" button/pills by eye, and a pulled network cable ("retrying (n/5)").
+- ❌→✅ Deleting a model once failed with `(os error 32)` (file briefly held by another process); delete/rename now retry on sharing violations.
+- ✅ Startup: `local stt loaded … on NVIDIA GeForce RTX 5080`, `llama-server ready` 3.8–5.9 s (13.6 s the very first time: shader compile), `local llm primed`.
 
 ### Shortcuts (`desktop/src-tauri/src/platform/windows.rs`)
-- [ ] `Ctrl+Win` (press, speak, press again) starts/stops dictation from any app. HUD appears bottom-center of the monitor under the mouse.
-- [ ] Releasing Win after `Ctrl+Win` must **not** open the Start menu (we inject VK 0xE8 as a mask key while Win is held). A lone Win tap must still open Start.
-- [ ] `Ctrl+Win+Shift` translate, `Ctrl+Win+Space` Ask, `Esc` cancels.
-- [ ] Settings → Shortcuts → Add: recording a new combo works (mouse middle/X buttons too). Korean keyboards: the 한/영 key reports as `Lang1` — make sure it doesn't break anything.
-- [ ] While typing normally, no keys are lost or delayed (the LL hook must return fast). Hooks can be silently removed by Windows if the callback is slow (`LowLevelHooksTimeout`) — if shortcuts stop working after a while, that's the suspect.
+- ✅ `Ctrl+Win` starts/stops dictation; HUD bottom-center of the monitor under the mouse.
+- ✅ Start menu does **not** open after `Ctrl+Win` (0xE8 mask key); a lone Win tap still opens Start.
+- ✅ `Ctrl+Win+Shift` translates (English → Korean target worked). ✅ `Esc` cancels (nothing pasted).
+- ❌→✅ `Ctrl+Win+Space` (Ask) on Local AI used to keep dictating silently (it arrives as a switch after `Ctrl+Win` starts a dictation); now cancels and shows the "API mode" notice.
+- ✅ Shortcut recording (what Settings → Shortcuts → Add uses): Right Ctrl+D → `ControlRight+KeyD`, mouse back → `Mouse4`, middle → `MouseMiddle`, 한/영 → `Lang1`; a lone 한/영 press never starts a session.
+- ⏳ Normal typing with Sori running (no lost/delayed keys, hook not dropped after a while). Injected-typing tests behaved identically with Sori on and off, but the Korean IME made them unreliable — needs real keyboard.
 
 ### Paste & context
-Test in: Notepad, VS Code (editor + Copilot/agent chat), Cursor, Windows Terminal (with `claude`/`codex` running), Chrome text area, Slack/Discord (Electron), the Claude desktop app, Outlook.
-- [ ] Dictated text is pasted at the cursor; focus returns to the target app (`LAST_HWND` + `SetForegroundWindow`).
-- [ ] With "Also copy to clipboard" OFF, the previous clipboard text is restored ~0.7 s later.
-- [ ] App category detection: `bundle_id` is `win:<exe name>`; categories in `crates/sori-core/src/prompts.rs::classify` include Windows exes (e.g. `win:code.exe`, `windowsterminal`, `win:claude.exe`). Check History shows the right app name, and that terminal + "claude"/"codex" window titles are treated as AI-agent prompts.
-- [ ] Ask with selected text (Ctrl+C capture via `copy_selection`): "make this more polite" should replace the selection in editable fields. Known gap: without UI Automation we only know a field is editable when there is a system caret — Chromium/Electron apps often have none, so Ask falls back to the answer card. Consider implementing UI Automation (`IUIAutomation::GetFocusedElement`, `ValuePattern`/`TextPattern`).
-- [ ] Elevated (admin) target apps can't receive `SendInput` from a non-elevated Sori — expected Windows behavior; make sure it fails gracefully.
+- ✅ Pasted at the cursor, focus stays on the target: Notepad, Chrome textarea, Windows Terminal (PowerShell prompt; not executed). ⏳ Claude desktop, Orca, Cursor, Slack (not automated: they hold the owner's live sessions), VS Code (not installed), multi-line paste into Windows Terminal (its multi-line warning).
+- ✅ "Also copy to clipboard" OFF → the previous clipboard text is restored.
+- ✅ History: `win:notepad.exe` / `win:chrome.exe` / `win:windowsterminal.exe` with window titles; a terminal titled "…Claude Code" gets the coding-agent prompt. App names now come from the exe's FileDescription ("Google Chrome", "Windows Terminal") instead of "chrome"/"WindowsTerminal".
+- ❌→✅ **Cleanup fell back to the raw transcript ("Um … uh …") for "can you check …?"** in every app: each level rewrote it as an instruction and `lost_question` rejected it. Polite requests may now become instructions; real questions still must stay questions (§4).
+- ⏳ Ask with selected text (admin/API mode only now); elevated target apps (`SendInput` blocked — should fail gracefully).
 
 ### Overlays
-- [ ] HUD is transparent (no white box), always on top, does **not** steal focus from the app being typed into, and is click-through except in hands-free mode (buttons clickable).
-- [ ] Answer card (Ask) shows, can be closed with Esc/✕, returns focus to the previous app.
+- ✅ HUD transparent (no box), always on top, never takes focus (`WS_EX_NOACTIVATE`; foreground stayed on the target throughout), clickable only in hands-free mode.
+- ⏳ Answer card (Ask is admin-only; not reachable in a team build).
 
 ### On-device models on Windows GPUs
-- [ ] Whisper (whisper-rs with `vulkan`) and llama-server (Vulkan) both use the GPU. Test on **integrated graphics** (Intel Iris Xe/Arc, AMD 780M) — target: text cleanup ≈ 2–3 s per sentence with Gemma 4 E2B; measure and record in `docs/NOTES.ko.md`.
-- [ ] If `vulkan-1.dll` is missing (no GPU driver), both fail to start. There is **no CPU fallback build yet** — decide whether to ship a CPU-only `llama-server` as a fallback (see §3).
-- [ ] Memory: ~4 GB with both models loaded. Check behavior on an 8 GB machine.
+- ❌→✅ **Whisper ran on the integrated GPU** while llama.cpp used the RTX 5080 (whisper.cpp takes Vulkan device #0 = iGPU). Now prefers the discrete GPU; the log names the device.
+- ✅ RTX 5080: STT 0.3–0.4 s, cleanup 0.16–0.18 s per call → ~0.55 s from stop to paste. ❌→✅ The first dictation after install took 33 s (Vulkan shaders compiled on first use) → warm-up at load (1.1 s).
+- ⚠️ Intel iGPU (Arrow Lake, 4 Xe cores; `GGML_VK_VISIBLE_DEVICES=0`): cleanup ~2 s ✅ target, but **Whisper 8.2 s** per sentence — 20 s with flash attention, which is now off on integrated GPUs. Stronger iGPUs (Arc 140V, 780M) still to measure.
+- ✅ No Vulkan driver (simulated with `VK_DRIVER_FILES` pointing nowhere): the app still starts; both models fall back to the CPU. ❌ **Whisper on the CPU takes ~3 min per sentence** (llama-server on the CPU is fine, 171 tok/s prompt) — not investigated. ⏳ `vulkan-1.dll` missing entirely → Sori.exe can't start (see §3).
+- ✅ Memory: RTX — Sori 1.5 GB + llama-server 2.0 GB working set; iGPU — 1.75 + 3.7 GB (shared memory). ⏳ 8 GB machine.
+- ⚠️ Other first-time shapes still compile once: first translation 10 s, first agent prompt 3.5 s (cached by the driver afterwards).
 
 ### Misc
-- [ ] Tray menu (Open / Settings / Quit) in the UI language; launch-at-login; "Show in taskbar" toggle (`set_dock_visible` → `skip_taskbar`).
-- [ ] Start/stop sounds (`C:\Windows\Media\Speech On.wav` / `Speech Off.wav`).
-- [ ] Microphone privacy denied → Home shows "denied" with "Open Settings" (`ms-settings:privacy-microphone`). Detection reads `HKCU/HKLM\…\CapabilityAccessManager\ConsentStore\microphone[\NonPackaged]`.
-- [ ] Single instance: launching again focuses the existing window.
+- ❌→✅ llama-server survived a Sori crash/kill (≈2 GB, and an update install silently kept the old locked `llama-server.exe`). Now in a kill-on-close job object.
+- ✅ Single instance: launching again focuses the existing window.
+- ⏳ Tray menu (Open / Settings / Quit), launch-at-login (HKCU Run is virtualized when started from the Claude app), "Show in taskbar", start/stop sounds (RDP audio), microphone privacy "denied" state.
 
 ---
 
 ## 3. Known gaps / not done yet
 
 **Windows**
-- Never run on real hardware (everything in §2).
+- Human test with a real mic and keyboard at the PC is still open (the ⏳ items in §2): typing feel with the hook, Korean speech, Claude desktop / Orca / Cursor / Slack paste, tray, launch at login, sounds, mic privacy.
+- `vulkan-1.dll` missing (no GPU driver at all) → Sori.exe doesn't start (it imports the Vulkan loader). With the loader present but no Vulkan driver, both models already fall back to the CPU. Cheapest fix: ship the Khronos loader (`vulkan-1.dll`, Apache-2.0) next to Sori.exe.
+- Whisper on integrated graphics is slow (8 s per sentence on an Arrow Lake iGPU, even with flash attention off) and on the CPU unusable (~3 min — looks pathological, worth profiling: the CPU build has AVX2/FMA). Options: a smaller Whisper for iGPU/CPU, or pointing such users to API mode.
+- First use of a new prompt size compiles Vulkan shaders once (10 s first translation, 3.5 s first agent prompt); priming a few prompt lengths at startup would hide it.
+- Building needs long paths enabled or a short `CARGO_TARGET_DIR` (§2 Build).
 - Text-field / selection detection is caret-based only; UI Automation not implemented.
-- No CPU fallback when Vulkan is unavailable (llama-server and whisper). Options: ship a second, CPU-only `llama-server-cpu.exe` and retry with it when the Vulkan one exits at startup; for Whisper, build whisper-rs with a runtime backend choice.
 - "Mute while dictating" is a no-op on Windows (`mute_output`); needs the Core Audio `IAudioEndpointVolume` API.
 - Installer isn't code-signed (SmartScreen). Not published to a Release yet (push a `v*` tag to make CI attach the `.exe` and `.dmg`).
 - Default shortcut choice (`Ctrl+Win`) should be validated with the owner; Typeless' Windows default is reported as either Right Alt or Ctrl+Win.
+
+**Cleanup quality seen on Windows (shared code)**
+- At level 4 in a browser tab ("Other"), Gemma once translated an English dictation into Korean; the coverage guard caught it and level 3 was used. Worth a look in `LOCAL_EXAMPLES` / `language_hint`.
 
 **On-device text model quality** (Gemma 4 E2B, 2B-class)
 - Reliable: keeps language and 반말/존댓말, keeps every request/constraint/hedge, removes fillers, fixes most tech terms, formats lists.
@@ -129,7 +140,7 @@ Code: `crates/sori-core/src/prompts.rs`, `pipeline.rs`.
 
 - **Purpose is stated explicitly.** Both prompt families say the speaker is a developer who mostly dictates prompts for AI coding agents; unclear words are read in that light. Per-app styles (`AppCategory::style`) turn Code/AI destinations into "a clear instruction the agent can act on: situation → request → constraints; numbered list for multiple requests".
 - **Five cleanup levels** (`Settings.cleanup_style`: `minimal`, `light`, `clean`, `polished` (default), `agent`; `prompts::cleanup_level`). Each level has its own contract in `CLOUD_LEVELS` / `LOCAL_LEVELS` and its own worked-example outputs (`LOCAL_EXAMPLES`, same inputs, five outputs). "Agent" writes a structured coding-agent prompt (goal → context → numbered tasks → constraints/questions); for chat/email destinations it writes a well-organized message instead.
-- **Drop guard** (`pipeline::dictate_text`): every rewrite is checked with `text::coverage_detail` (share of the transcript's content words still present; Hangul matched by stem, Latin tech terms that replaced Hangul spellings get credit) and `text::lost_question` (a question must stay a question). Thresholds: L1 0.8, L2 0.7, L3 0.6, L4–5 0.5. On failure it retries at a gentler level (5/4 → 3 → 2) and finally inserts the transcript as spoken (`cleanup_simplified` / `cleanup_dropped` notes in History).
+- **Drop guard** (`pipeline::dictate_text`): every rewrite is checked with `text::coverage_detail` (share of the transcript's content words still present; Hangul matched by stem, Latin tech terms that replaced Hangul spellings get credit) and `text::lost_question` (a real question must stay a question; a polite request phrased as one — "can you check …?", "좀 봐 줄래?" — may become an instruction, which is what an agent prompt wants). Thresholds: L1 0.8, L2 0.7, L3 0.6, L4–5 0.5. On failure it retries at a gentler level (5/4 → 3 → 2) and finally inserts the transcript as spoken (`cleanup_simplified` / `cleanup_dropped` notes in History).
 - **Long transcripts on the local model** (> 260 chars) are cleaned chunk by chunk at level ≤ 3 (`text::chunk_sentences`), then restructured as a whole for levels 4–5 — a 2B model otherwise summarizes and drops the tail (seen in real use: a 490-char dictation lost 4 of 6 requests).
 - **Cloud models** (OpenRouter) get `CLOUD_HEAD` (hard rules: same language/speech level, nothing lost, questions stay questions, nothing added) + the level contract + developer block, per-app style, dictionary and the user's style notes.
 - **Small local models** get `LOCAL_DICTATE_SYSTEM` (short) + 5 worked examples as prior chat turns (`local_examples`). Each input carries a tag computed in code, e.g. `[Write in Korean, casual 반말 endings like ~해/~줘/~야 — no ~요 · a prompt for a coding agent]`:

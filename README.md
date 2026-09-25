@@ -57,7 +57,7 @@ The model download survives quitting the app (it resumes with an HTTP Range requ
 Requirements: Rust (stable), Node 20+, and
 
 - macOS: Xcode Command Line Tools.
-- Windows: Visual Studio Build Tools (C++), CMake, LLVM (for bindgen) and the [Vulkan SDK](https://vulkan.lunarg.com/).
+- Windows: Visual Studio Build Tools (C++), CMake, LLVM (for bindgen) and the [Vulkan SDK](https://vulkan.lunarg.com/). MSBuild hits the 260-character path limit inside ggml's Vulkan build unless Windows long paths are enabled — otherwise build with a short target dir (`$env:CARGO_TARGET_DIR="C:\t"`). For installers you share, also set `$env:GGML_NATIVE="OFF"` (as CI does).
 
 ```bash
 npm --prefix desktop ci
@@ -104,7 +104,7 @@ cargo run -p sori-core --example polish_eval -- google/gemini-3.8-flash local:ge
 ## Status
 
 - macOS: daily-driven.
-- Windows: implemented and built in CI; not yet tested on real hardware. Text-field detection relies on the system caret, so some apps (browsers, Electron) are treated as "unknown" and always get a paste.
+- Windows: first real-PC run done (shortcuts, HUD, paste, downloads, GPU; see [docs/HANDOFF.md](docs/HANDOFF.md) §2); a hands-on test with a real microphone is still open. Fast on a discrete GPU (~0.5 s per sentence on an RTX 5080); speech recognition is slow on integrated graphics. Text-field detection relies on the system caret, so some apps (browsers, Electron) are treated as "unknown" and always get a paste.
 - Android: planned as a keyboard (IME) reusing `sori-core`.
 
 **Picking this up (human or agent)?** Read [docs/HANDOFF.md](docs/HANDOFF.md) — what's verified, the Windows checklist, known gaps and how the prompts work.

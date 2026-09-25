@@ -103,10 +103,30 @@ desktop/src/             React UI (홈·기록·사전·설정, 음성 바 HUD, 
 
 전체(말 끝 → 붙여넣기) 약 1.5–2.7초.
 
-## Windows / Android 계획
+## Windows 실기기 측정 (2026-09-25)
 
-- **Windows**: 같은 Tauri 앱. `platform/windows.rs`만 구현하면 됨 — `WH_KEYBOARD_LL` 훅(기본 `Right Alt` / `Right Alt+Right Shift` / `Right Alt+Space`), 클립보드 + `SendInput(Ctrl+V)`, UI Automation으로 포커스/선택 텍스트.
-- **Android**: 모든 앱에 입력하려면 **키보드 앱(IME)**이어야 함 → Kotlin `InputMethodService` + `sori-core`를 JNI/UniFFI로 호출(STT·LLM·프롬프트·기록 재사용). Typeless도 모바일은 자체 키보드 방식.
+첫 실기기 검증. 사람 손 테스트(실제 마이크·키보드)는 아직이고, 아래는 원격 데스크톱(RDP) 세션에서 **주입한 키 입력(SendInput) + `SORI_DEBUG_WAV`(영어 TTS 음성)**로 앱 전체 경로를 돌린 결과.
+
+- PC: Core Ultra 9 285K(내장 Intel Graphics, Xe-LPG 4코어) + **RTX 5080 16GB**, RAM 64GB, Windows 11 Pro 26200. 드라이버 NVIDIA 616.64 / Intel 101.8331, Vulkan SDK 1.4.357. `vulkaninfo`: Vulkan0 = Intel, Vulkan1 = RTX 5080.
+- 다운로드(병렬): Whisper 574MB **16.2초**(~35MB/s), Gemma 3.1GB **59.2초**(~52MB/s). 378MB에서 강제 종료 → 재실행 시 남은 177MB만 4.1초에 받고 SHA-256 통과.
+- 시작: Whisper 로드 1.1–2.1초 + 워밍업 1.1초(RTX). llama-server **설치 후 첫 시작 13.6초**(프라이밍 881토큰에 23초 — Vulkan 셰이더 컴파일), 이후 3.8–5.9초.
+- 받아쓰기 한 번(8.9초 영어 문장, 말 끝 → 붙여넣기):
+
+| 장치 | STT | 다듬기(LLM) | 비고 |
+|---|---|---|---|
+| RTX 5080 | 0.3–0.4초 | 0.16–0.18초(1회 호출) | 합계 **약 0.55초**. 28초짜리 긴 요청: STT 0.33초 + LLM 1.3초(청크 3회) |
+| Intel 내장(Xe-LPG 4코어) | **8.2초**(flash attention 끔) / 20.3초(켬) | 2.0초 | 긴 요청: STT 9.1초 + LLM 17초. 목표(2–3초)에 LLM은 들지만 Whisper는 못 미침 |
+| CPU만(Vulkan 드라이버 없음 흉내) | **클립당 약 3분** | 프롬프트 처리 171 tok/s | 앱은 안 죽고 CPU로 전환되지만 Whisper는 실사용 불가 — 원인 미조사 |
+
+- Whisper 장치별(`local_stt_eval`, 클립 3개 평균): RTX 5080 FA 켬 0.19–0.21초 / 끔 0.32초, Intel 내장 FA 켬 22–24초 / 끔 6.4–7.0초. → 외장 GPU·Metal은 FA 켬, 내장 GPU는 끔.
+- 메모리(작업 집합): RTX — Sori 1.5GB + llama-server 2.0GB(VRAM: Whisper 0.8GB, Gemma 1.7GB). Intel 내장 — Sori 1.75GB + llama-server 3.7GB(공유 메모리).
+- 처음 보는 배치 크기에서 Vulkan 셰이더를 한 번 컴파일: 첫 에이전트 프롬프트 3.5초, **첫 번역 10초**(157토큰을 16 tok/s). 드라이버가 캐시해서 두 번째부터 정상. 시작 시 프라이밍을 몇 가지 길이로 더 하면 줄일 수 있음(미구현).
+- 발견해서 고친 것: 첫 실행 메인 창이 항상 빈 화면, Whisper가 내장 GPU 선택, llama-server 고아 프로세스(업데이트 시 exe 잠김), MSVCP140/VCOMP140 DLL 의존, 첫 받아쓰기 33초(셰이더 컴파일), "can you …?" 부탁이 다듬기 가드에 전부 걸려 필러 섞인 원문이 들어감, Ask 단축키가 조용히 받아쓰기로 계속됨. 자세한 건 HANDOFF §2와 커밋 메시지.
+- 테스트 팁: Claude 데스크톱(MSIX) 안에서 실행한 프로그램은 AppData 쓰기가 `…\Packages\Claude_…\LocalCache\`로 가상화됨 → 거기서 설치한 Sori는 시작 메뉴 등에 안 보임. 실제 설치 확인은 탐색기에서 설치 파일을 실행.
+
+## Android 계획
+
+- 모든 앱에 입력하려면 **키보드 앱(IME)**이어야 함 → Kotlin `InputMethodService` + `sori-core`를 JNI/UniFFI로 호출(STT·LLM·프롬프트·기록 재사용). Typeless도 모바일은 자체 키보드 방식.
 
 ## 개발자 모드 (설정 → 개인화, 기본 켜짐)
 
@@ -117,7 +137,7 @@ desktop/src/             React UI (홈·기록·사전·설정, 음성 바 HUD, 
 
 ## 로컬 음성 인식 (설정 → AI · API 키 → 음성 인식 엔진)
 
-- whisper.cpp(`whisper-rs`)로 **Whisper large-v3-turbo q5 (574MB)**를 앱 안에서 실행. macOS는 Metal, Windows는 Vulkan(빌드 시 Vulkan SDK 필요, 아직 Windows 실기기 미검증).
+- whisper.cpp(`whisper-rs`)로 **Whisper large-v3-turbo q5 (574MB)**를 앱 안에서 실행. macOS는 Metal, Windows는 Vulkan(빌드 시 Vulkan SDK 필요; 측정은 위 "Windows 실기기 측정").
 - 모델은 처음 선택할 때 내려받음(`~/Library/Application Support/com.seyoon.sori/models`), 앱 시작 시 백그라운드 로드(약 6초), 로드 중 메모리 약 850MB. 실패·미설치 시 ElevenLabs로 자동 전환.
 - 개발 용어·사전·기술 스택을 Whisper 초기 프롬프트로 전달(문장형 — "용어:" 라벨형은 결과에 새어 나와 CER 악화).
 - 이 Mac 측정(FLEURS-ko 40문장, `scripts/stt_bench.py`, `cargo run --release -p sori --example local_stt_eval -- <models> <data>`):
